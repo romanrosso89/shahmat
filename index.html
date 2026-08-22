@@ -2325,39 +2325,65 @@ async function importFromLichessWithToken(){
       const solutionMoves = puzzle.solution||[];
       if(solutionMoves.length<2){ tooShort++; console.warn('Lichess import: solucion demasiado corta', puzzle); continue; }
 
-      const tempGame = new Chess();
+      let tempGame = new Chess();
       let usedPuzzleFen = false;
+      let solution = null;
 
       if(puzzle.fen){
         // Camino preferido: Lichess ya nos da la posicion LISTA para resolver.
         // En este formato, la secuencia de solucion ya NO incluye la jugada del rival.
-        try{ tempGame.load(puzzle.fen); usedPuzzleFen = true; }catch(e){ usedPuzzleFen = false; }
+        try{ tempGame.load(puzzle.fen); usedPuzzleFen = true; solution = solutionMoves.join(' '); }catch(e){ usedPuzzleFen = false; }
       }
       if(!usedPuzzleFen){
         if(!game || !game.pgn){ noPgn++; console.warn('Lichess import: sin puzzle.fen ni game.pgn', {puzzleId:puzzle.id, game}); continue; }
         let movesText = (game.pgn||'').replace(/\[.*?\]\s*/g,'').trim();
         const sanMoves = movesText.replace(/\d+\.\s*/g,'').replace(/\s*(1-0|0-1|1\/2-1\/2|\*)\s*$/,'').trim().split(/\s+/).filter(m=>m.length>0);
-        if(puzzle.initialPly > sanMoves.length){ replayFail++; console.warn('Lichess import: PGN mas corto que initialPly', {initialPly:puzzle.initialPly, sanMovesLen:sanMoves.length}); continue; }
-        let ok=true;
-        for(let i=0;i<puzzle.initialPly&&i<sanMoves.length;i++){
-          try{ if(!tempGame.move(sanMoves[i])){ ok=false;break; } } catch(e){ ok=false;break; }
-        }
-        if(!ok){ replayFail++; console.warn('Lichess import: fallo al reproducir PGN', {initialPly:puzzle.initialPly, sanMoves, pgn:game.pgn}); continue; }
 
-        // Formato viejo (reconstruido por PGN): la primera jugada de la solucion ES el error
-        // del rival y hay que aplicarla para llegar a la posicion real donde resuelve el alumno.
-        const triggerMove = solutionMoves[0];
-        let triggerOk = false;
-        try{
-          const mv = tempGame.move({from:triggerMove.substring(0,2), to:triggerMove.substring(2,4), promotion:triggerMove.length>4?triggerMove[4]:'q'});
-          triggerOk = !!mv;
-        }catch(e){ triggerOk = false; }
-        if(!triggerOk){ triggerFail++; console.warn('Lichess import: no se pudo aplicar la jugada del rival', {triggerMove, fenAntes:tempGame.fen()}); continue; }
+        // La API de Lichess indica "initialPly" como la cantidad de jugadas del PGN
+        // que hay que reproducir para llegar a la posicion ANTES de la jugada del rival.
+        // Probamos ese valor y, por las dudas, initialPly-1 e initialPly+1 (por si hay
+        // una diferencia de conteo entre versiones de la API), y nos quedamos con la
+        // primera interpretacion que permite reproducir TODA la secuencia de solucion
+        // de forma legal (y que, si el tema es de mate, termina en jaque mate).
+        const candidatos = [puzzle.initialPly, puzzle.initialPly-1, puzzle.initialPly+1].filter(n=>n>=0 && n<=sanMoves.length);
+        const esTemaDeMate = /^mateIn/i.test(theme);
+        let encontrado = false;
+
+        for(const plyCount of candidatos){
+          const g = new Chess();
+          let ok = true;
+          for(let i=0;i<plyCount;i++){
+            try{ if(!g.move(sanMoves[i])){ ok=false;break; } } catch(e){ ok=false;break; }
+          }
+          if(!ok) continue;
+
+          // Intentamos aplicar TODA la secuencia de solucion (jugada del rival + jugadas del alumno)
+          // desde esta posicion, para confirmar que esta es la alineacion correcta.
+          let allOk = true;
+          for(const m of solutionMoves){
+            try{
+              const mv = g.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'});
+              if(!mv){ allOk=false;break; }
+            } catch(e){ allOk=false;break; }
+          }
+          if(!allOk) continue;
+          if(esTemaDeMate && !g.in_checkmate()) continue;
+
+          // Esta alineacion funciona: reconstruimos la posicion real de partida
+          // (justo despues de la jugada del rival, antes de que resuelva el alumno).
+          const g2 = new Chess();
+          for(let i=0;i<plyCount;i++){ g2.move(sanMoves[i]); }
+          const trigger = solutionMoves[0];
+          g2.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'});
+          tempGame = g2;
+          solution = solutionMoves.slice(1).join(' ');
+          encontrado = true;
+          break;
+        }
+
+        if(!encontrado){ triggerFail++; console.warn('Lichess import: ninguna alineacion de jugadas funciono', {initialPly:puzzle.initialPly, solutionMoves, pgn:game.pgn}); continue; }
       }
 
-      // Con puzzle.fen: la posicion ya esta lista y la secuencia completa es lo que hay que resolver.
-      // Sin puzzle.fen (PGN viejo): ya aplicamos la jugada del rival arriba, y el resto es lo que hay que resolver.
-      const solution = usedPuzzleFen ? solutionMoves.join(' ') : solutionMoves.slice(1).join(' ');
       const fen = tempGame.fen();
       if(fen==='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'){ replayFail++; continue; }
       const playerColor = fen.split(' ')[1]||'w';
@@ -2398,7 +2424,7 @@ async function importFromLichessWithToken(){
   if(networkErrors>0) detalle.push(`${networkErrors} error de red/CORS`);
   let diag = '';
   if(entriesFound < qty){ diag = ` [diagnóstico: la respuesta trajo ${entriesFound} puzzle(s), claves: ${responseKeys}]`; }
-  status.textContent = `[v4] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
+  status.textContent = `[v5] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
   btn.disabled=false;
   if(imported>0) renderAdminExercises();
 }
