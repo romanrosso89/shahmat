@@ -2345,7 +2345,7 @@ async function importFromLichessWithToken(){
         // una diferencia de conteo entre versiones de la API), y nos quedamos con la
         // primera interpretacion que permite reproducir TODA la secuencia de solucion
         // de forma legal (y que, si el tema es de mate, termina en jaque mate).
-        const candidatos = [puzzle.initialPly, puzzle.initialPly-1, puzzle.initialPly+1].filter(n=>n>=0 && n<=sanMoves.length);
+        const candidatos = [puzzle.initialPly, puzzle.initialPly-1, puzzle.initialPly+1, puzzle.initialPly-2, puzzle.initialPly+2].filter(n=>n>=0 && n<=sanMoves.length);
         const esTemaDeMate = /^mateIn/i.test(theme);
         let encontrado = false;
 
@@ -2357,6 +2357,8 @@ async function importFromLichessWithToken(){
           }
           if(!ok) continue;
 
+          const rivalColor = g.turn(); // quien mueve la jugada "trigger" (el rival)
+
           // Intentamos aplicar TODA la secuencia de solucion (jugada del rival + jugadas del alumno)
           // desde esta posicion, para confirmar que esta es la alineacion correcta.
           let allOk = true;
@@ -2367,7 +2369,12 @@ async function importFromLichessWithToken(){
             } catch(e){ allOk=false;break; }
           }
           if(!allOk) continue;
-          if(esTemaDeMate && !g.in_checkmate()) continue;
+          if(esTemaDeMate){
+            // El jaque mate final tiene que caer sobre el RIVAL, nunca sobre el alumno.
+            // Si el conteo de jugadas quedo corrido, a veces igual se arma una secuencia
+            // legal que termina en jaque mate, pero al reves (el alumno queda mateado).
+            if(!g.in_checkmate() || g.turn()!==rivalColor) continue;
+          }
 
           // Esta alineacion funciona: reconstruimos la posicion real de partida
           // (justo despues de la jugada del rival, antes de que resuelva el alumno).
@@ -2400,7 +2407,12 @@ async function importFromLichessWithToken(){
         }catch(e){ verifyOk = false; break; }
       }
       const esTemaDeMate = /^mateIn/i.test(theme);
-      if(verifyOk && esTemaDeMate && !verifyGame.in_checkmate()){ verifyOk = false; }
+      if(verifyOk && esTemaDeMate){
+        // El jaque mate final tiene que caer sobre el RIVAL (playerColor es el alumno,
+        // asi que quien queda en jaque mate al final tiene que ser el color contrario).
+        if(!verifyGame.in_checkmate()){ verifyOk = false; }
+        else if(verifyGame.turn()===playerColor){ verifyOk = false; }
+      }
       if(!verifyOk){ replayFail++; console.warn('Lichess import: la secuencia no verifica (no da mate o jugada ilegal)', {puzzleId:puzzle.id, fen, solution, usedPuzzleFen}); continue; }
 
       await dbInsert('exercises',{
@@ -2424,7 +2436,7 @@ async function importFromLichessWithToken(){
   if(networkErrors>0) detalle.push(`${networkErrors} error de red/CORS`);
   let diag = '';
   if(entriesFound < qty){ diag = ` [diagnóstico: la respuesta trajo ${entriesFound} puzzle(s), claves: ${responseKeys}]`; }
-  status.textContent = `[v5] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
+  status.textContent = `[v6] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
   btn.disabled=false;
   if(imported>0) renderAdminExercises();
 }
