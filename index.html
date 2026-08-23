@@ -2359,10 +2359,25 @@ async function importFromLichessWithToken(){
 
           const rivalColor = g.turn(); // quien mueve la jugada "trigger" (el rival)
 
-          // Intentamos aplicar TODA la secuencia de solucion (jugada del rival + jugadas del alumno)
-          // desde esta posicion, para confirmar que esta es la alineacion correcta.
+          // Aplicamos primero SOLO la jugada del rival, para revisar la posicion
+          // que le vamos a presentar al alumno antes de seguir.
+          const trigger = solutionMoves[0];
+          let triggerMv = null;
+          try{ triggerMv = g.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'}); }catch(e){ triggerMv = null; }
+          if(!triggerMv) continue;
+          if(esTemaDeMate && g.in_check()){
+            // En un ejercicio de "Mate en N" el alumno tiene que estar DANDO jaque,
+            // nunca recibiendolo apenas arranca. Si quedo en jaque, esta alineacion
+            // de jugadas esta mal (aunque el resto de la secuencia parezca legal).
+            continue;
+          }
+
+          // Ahora aplicamos el resto de la secuencia (las jugadas del alumno
+          // y las respuestas forzadas del rival en el medio) para confirmar que esta
+          // es la alineacion correcta.
           let allOk = true;
-          for(const m of solutionMoves){
+          for(let i=1;i<solutionMoves.length;i++){
+            const m = solutionMoves[i];
             try{
               const mv = g.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'});
               if(!mv){ allOk=false;break; }
@@ -2380,7 +2395,6 @@ async function importFromLichessWithToken(){
           // (justo despues de la jugada del rival, antes de que resuelva el alumno).
           const g2 = new Chess();
           for(let i=0;i<plyCount;i++){ g2.move(sanMoves[i]); }
-          const trigger = solutionMoves[0];
           g2.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'});
           tempGame = g2;
           solution = solutionMoves.slice(1).join(' ');
@@ -2398,15 +2412,20 @@ async function importFromLichessWithToken(){
       // Verificacion final: reproducir toda la secuencia de solucion desde `fen` y confirmar
       // que es legal y, si el tema es de mate, que efectivamente termina en jaque mate.
       const verifyGame = new Chess(fen);
-      const solveMoves = solution.split(' ').filter(m=>m.length>=4);
+      const esTemaDeMate = /^mateIn/i.test(theme);
       let verifyOk = true;
+      if(esTemaDeMate && verifyGame.in_check()){
+        // En "Mate en N" el alumno tiene que estar dando jaque, no arrancando en jaque.
+        verifyOk = false;
+      }
+      const solveMoves = solution.split(' ').filter(m=>m.length>=4);
       for(const m of solveMoves){
+        if(!verifyOk) break;
         try{
           const r = verifyGame.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'});
           if(!r){ verifyOk = false; break; }
         }catch(e){ verifyOk = false; break; }
       }
-      const esTemaDeMate = /^mateIn/i.test(theme);
       if(verifyOk && esTemaDeMate){
         // El jaque mate final tiene que caer sobre el RIVAL (playerColor es el alumno,
         // asi que quien queda en jaque mate al final tiene que ser el color contrario).
