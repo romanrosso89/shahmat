@@ -663,7 +663,17 @@
             <option value="Intermedio" selected>Normal</option>
             <option value="Avanzado">Más difíciles</option>
           </select>
-          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem">Esto es relativo a tu propio nivel en Lichess. El nivel final de cada ejercicio (Principiante/Intermedio/Avanzado) se calcula solo, según el rating real de cada puzzle.</div>
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem">Esto es relativo a tu propio nivel en Lichess.</div>
+        </div>
+        <div class="form-row">
+          <label>Grupo donde ubicarlos</label>
+          <select id="lichess-import-group">
+            <option value="auto">Automático (según el rating de cada puzzle)</option>
+            <option value="Principiante">Principiante</option>
+            <option value="Intermedio">Intermedio</option>
+            <option value="Avanzado">Avanzado</option>
+          </select>
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem">Si elegís un grupo puntual, TODOS los puzzles de esta importación van ahí, sin importar el rating.</div>
         </div>
         <div class="form-row">
           <label>Cantidad</label>
@@ -2267,9 +2277,9 @@ function animateCards(){
 }
 
 async function importFromLichessWithToken(){
-  // Clasifica el nivel del ejercicio segun el rating REAL que trae Lichess para
-  // cada puzzle (no segun lo que elegiste en el desplegable "Nivel", que ahora
-  // solo controla que tan dificiles le pedimos los puzzles a Lichess).
+  // Clasifica el nivel del ejercicio segun el rating REAL que trae Lichess.
+  // Se usa solo si el profe deja el "Grupo donde ubicarlos" en Automático;
+  // si elige un grupo puntual, ese grupo se usa directamente para todos.
   function nivelSegunRating(rating){
     if(rating <= 1200) return 'Principiante';
     if(rating <= 1800) return 'Intermedio';
@@ -2278,6 +2288,7 @@ async function importFromLichessWithToken(){
   const token = document.getElementById('lichess-token').value.trim();
   const catVal = document.getElementById('lichess-import-category').value;
   const level = document.getElementById('lichess-import-level').value;
+  const grupoElegido = document.getElementById('lichess-import-group').value; // 'auto' o un grupo fijo
   const qty = parseInt(document.getElementById('lichess-import-qty').value);
   const access = document.getElementById('lichess-import-access').value;
   const btn = document.getElementById('lichess-import-btn2');
@@ -2431,7 +2442,7 @@ async function importFromLichessWithToken(){
       }
       if(!verifyOk){ replayFail++; console.warn('Lichess import: la secuencia no verifica (no da mate o jugada ilegal)', {puzzleId:puzzle.id, fen, solution, usedPuzzleFen}); continue; }
 
-      const nivelCalculado = nivelSegunRating(puzzle.rating);
+      const nivelCalculado = grupoElegido === 'auto' ? nivelSegunRating(puzzle.rating) : grupoElegido;
       await dbInsert('exercises',{
         title:`${categoryName} — Puzzle #${puzzle.id}`,
         description:`Puzzle de Lichess. Rating: ${puzzle.rating}.`,
