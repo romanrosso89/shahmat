@@ -576,7 +576,10 @@
   </div>
   <div class="exercise-view">
     <div class="ex-header">
-      <div id="ex-num-badge" style="font-size:0.78rem;color:var(--gold);font-weight:700;margin-bottom:0.3rem;letter-spacing:0.05em"></div>
+      <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.3rem">
+        <div id="ex-num-badge" style="font-size:0.78rem;color:var(--gold);font-weight:700;letter-spacing:0.05em"></div>
+        <div id="ex-color-badge"></div>
+      </div>
       <h2 id="ex-detail-title">—</h2>
       <p id="ex-detail-desc" style="display:none">—</p>
     </div>
@@ -884,6 +887,12 @@ async function openExercise(ex){
     } else {
       numBadge.textContent = '';
     }
+  }
+  const colorBadge = document.getElementById('ex-color-badge');
+  if(colorBadge){
+    colorBadge.innerHTML = ex.player_color==='b'
+      ? '<span style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.72rem;color:#ccc;background:#222;border:1px solid #555;border-radius:10px;padding:0.15rem 0.6rem"><span style="width:10px;height:10px;border-radius:50%;background:#222;border:1.5px solid #ccc;display:inline-block"></span>Jugás con negras</span>'
+      : '<span style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.72rem;color:#333;background:#f0ead8;border:1px solid #ccc;border-radius:10px;padding:0.15rem 0.6rem"><span style="width:10px;height:10px;border-radius:50%;background:#f0ead8;border:1.5px solid #333;display:inline-block"></span>Jugás con blancas</span>';
   }
 
   const videoArea=document.getElementById('video-area');
@@ -1362,9 +1371,13 @@ async function renderExerciseList(category,level){
 
     const miniBoard = renderMiniBoard(ex.fen, flipped);
     const checkmark = solved ? '<span class="ex-card-check">✓</span>' : '';
+    const colorBadge = ex.player_color==='b'
+      ? '<span style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.68rem;color:#ccc;background:#222;border:1px solid #555;border-radius:10px;padding:0.1rem 0.5rem"><span style="width:9px;height:9px;border-radius:50%;background:#222;border:1.5px solid #ccc;display:inline-block"></span>Negras</span>'
+      : '<span style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.68rem;color:#333;background:#f0ead8;border:1px solid #ccc;border-radius:10px;padding:0.1rem 0.5rem"><span style="width:9px;height:9px;border-radius:50%;background:#f0ead8;border:1.5px solid #333;display:inline-block"></span>Blancas</span>';
 
     card.innerHTML=`
       ${miniBoard}
+      <div style="padding:0.3rem 0.5rem 0">${colorBadge}</div>
       <div class="ex-card-footer">
         <span class="ex-card-num">#${num}</span>
         ${checkmark}
@@ -1879,8 +1892,7 @@ function updateGameStatus(){
       const matedColor = chessGame.turn(); // el lado sin movimientos es el que recibió el mate
       const playerColor = currentExercise ? (currentExercise.player_color||'w') : 'w';
       const alumnoGano = matedColor !== playerColor;
-      const winner = matedColor==='w' ? 'negras' : 'blancas';
-      document.getElementById('mate-side-sub').textContent = `Ganan las ${winner}`;
+      document.getElementById('mate-side-sub').textContent = '';
       sidePanel.classList.remove('win','lose');
       sidePanel.classList.add(alumnoGano ? 'win' : 'lose');
       sidePanel.classList.add('show');
@@ -2150,7 +2162,7 @@ async function importFromLichess(){
         }
 
         const solution = puzzle.solution[0];
-        const title = `${categoryName} — Puzzle #${puzzle.id}`;
+        const title = categoryName;
         const desc = `Puzzle de Lichess. Rating: ${puzzle.rating}.`;
 
         await dbInsert('exercises',{
@@ -2444,7 +2456,7 @@ async function importFromLichessWithToken(){
 
       const nivelCalculado = grupoElegido === 'auto' ? nivelSegunRating(puzzle.rating) : grupoElegido;
       await dbInsert('exercises',{
-        title:`${categoryName} — Puzzle #${puzzle.id}`,
+        title:categoryName,
         description:`Puzzle de Lichess. Rating: ${puzzle.rating}.`,
         fen, solution, level:nivelCalculado, category:categoryName, access, player_color:playerColor, video_url:null
       });
