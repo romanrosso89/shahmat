@@ -657,12 +657,13 @@
           </select>
         </div>
         <div class="form-row">
-          <label>Nivel</label>
+          <label>Dificultad a pedir</label>
           <select id="lichess-import-level">
-            <option value="Principiante">Principiante</option>
-            <option value="Intermedio" selected>Intermedio</option>
-            <option value="Avanzado">Avanzado</option>
+            <option value="Principiante">Más fáciles</option>
+            <option value="Intermedio" selected>Normal</option>
+            <option value="Avanzado">Más difíciles</option>
           </select>
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.3rem">Esto es relativo a tu propio nivel en Lichess. El nivel final de cada ejercicio (Principiante/Intermedio/Avanzado) se calcula solo, según el rating real de cada puzzle.</div>
         </div>
         <div class="form-row">
           <label>Cantidad</label>
@@ -1772,7 +1773,8 @@ async function checkAutoSolve(from,to){
   }
 
   // Quedan más jugadas: el rival responde con la jugada EXACTA de la solución (no con Stockfish)
-  showResultBanner('correct');
+  // No mostramos "Excelente" aca todavia: ese cartel queda reservado para cuando se
+  // termina de resolver el ejercicio completo (ver solveExerciseComplete).
   setTimeout(()=>{ playExerciseOpponentMove(); }, 700);
 }
 
@@ -2265,6 +2267,14 @@ function animateCards(){
 }
 
 async function importFromLichessWithToken(){
+  // Clasifica el nivel del ejercicio segun el rating REAL que trae Lichess para
+  // cada puzzle (no segun lo que elegiste en el desplegable "Nivel", que ahora
+  // solo controla que tan dificiles le pedimos los puzzles a Lichess).
+  function nivelSegunRating(rating){
+    if(rating <= 1200) return 'Principiante';
+    if(rating <= 1800) return 'Intermedio';
+    return 'Avanzado';
+  }
   const token = document.getElementById('lichess-token').value.trim();
   const catVal = document.getElementById('lichess-import-category').value;
   const level = document.getElementById('lichess-import-level').value;
@@ -2421,10 +2431,11 @@ async function importFromLichessWithToken(){
       }
       if(!verifyOk){ replayFail++; console.warn('Lichess import: la secuencia no verifica (no da mate o jugada ilegal)', {puzzleId:puzzle.id, fen, solution, usedPuzzleFen}); continue; }
 
+      const nivelCalculado = nivelSegunRating(puzzle.rating);
       await dbInsert('exercises',{
         title:`${categoryName} — Puzzle #${puzzle.id}`,
         description:`Puzzle de Lichess. Rating: ${puzzle.rating}.`,
-        fen, solution, level, category:categoryName, access, player_color:playerColor, video_url:null
+        fen, solution, level:nivelCalculado, category:categoryName, access, player_color:playerColor, video_url:null
       });
       imported++;
       status.textContent = `Importando... ${imported}/${qty} puzzles`;
