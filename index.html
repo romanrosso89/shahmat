@@ -2323,7 +2323,7 @@ async function importFromLichessWithToken(){
       seenIds.add(puzzle.id);
       if(!(puzzle.themes||[]).includes(theme)){ themeSkips++; continue; }
       const solutionMoves = puzzle.solution||[];
-      if(solutionMoves.length<2){ tooShort++; console.warn('Lichess import: solucion demasiado corta', puzzle); continue; }
+      if(solutionMoves.length<1){ tooShort++; console.warn('Lichess import: solucion vacia', puzzle); continue; }
 
       let tempGame = new Chess();
       let usedPuzzleFen = false;
@@ -2340,66 +2340,53 @@ async function importFromLichessWithToken(){
         const sanMoves = movesText.replace(/\d+\.\s*/g,'').replace(/\s*(1-0|0-1|1\/2-1\/2|\*)\s*$/,'').trim().split(/\s+/).filter(m=>m.length>0);
 
         // La API de Lichess indica "initialPly" como la cantidad de jugadas del PGN
-        // que hay que reproducir para llegar a la posicion ANTES de la jugada del rival.
-        // Probamos ese valor y, por las dudas, initialPly-1 e initialPly+1 (por si hay
-        // una diferencia de conteo entre versiones de la API), y nos quedamos con la
-        // primera interpretacion que permite reproducir TODA la secuencia de solucion
-        // de forma legal (y que, si el tema es de mate, termina en jaque mate).
+        // que hay que reproducir para llegar a la posicion de arranque. El problema es
+        // que, segun la version/formato, esa posicion puede venir de dos formas distintas:
+        //  A) YA lista para que el alumno resuelva (toda "solution" son jugadas a resolver)
+        //  B) todavia falta aplicar la primera jugada de "solution" (la jugada del rival)
+        // Probamos varias cantidades de jugadas del PGN (por si initialPly viene corrido)
+        // y, para cada una, las dos interpretaciones A y B, quedandonos con la primera
+        // que arma una secuencia legal (y, si es tema de mate, que el alumno de jaque
+        // mate al rival sin arrancar el mismo en jaque).
         const candidatos = [puzzle.initialPly, puzzle.initialPly-1, puzzle.initialPly+1, puzzle.initialPly-2, puzzle.initialPly+2].filter(n=>n>=0 && n<=sanMoves.length);
         const esTemaDeMate = /^mateIn/i.test(theme);
         let encontrado = false;
 
-        for(const plyCount of candidatos){
+        function intentarAlineacion(plyCount, incluyeJugadaDelRival){
           const g = new Chess();
-          let ok = true;
           for(let i=0;i<plyCount;i++){
-            try{ if(!g.move(sanMoves[i])){ ok=false;break; } } catch(e){ ok=false;break; }
+            try{ if(!g.move(sanMoves[i])) return null; } catch(e){ return null; }
           }
-          if(!ok) continue;
-
-          const rivalColor = g.turn(); // quien mueve la jugada "trigger" (el rival)
-
-          // Aplicamos primero SOLO la jugada del rival, para revisar la posicion
-          // que le vamos a presentar al alumno antes de seguir.
-          const trigger = solutionMoves[0];
-          let triggerMv = null;
-          try{ triggerMv = g.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'}); }catch(e){ triggerMv = null; }
-          if(!triggerMv) continue;
-          if(esTemaDeMate && g.in_check()){
-            // En un ejercicio de "Mate en N" el alumno tiene que estar DANDO jaque,
-            // nunca recibiendolo apenas arranca. Si quedo en jaque, esta alineacion
-            // de jugadas esta mal (aunque el resto de la secuencia parezca legal).
-            continue;
+          let movesParaResolver = solutionMoves;
+          if(incluyeJugadaDelRival){
+            const trigger = solutionMoves[0];
+            let triggerMv = null;
+            try{ triggerMv = g.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'}); }catch(e){ triggerMv = null; }
+            if(!triggerMv) return null;
+            movesParaResolver = solutionMoves.slice(1);
           }
-
-          // Ahora aplicamos el resto de la secuencia (las jugadas del alumno
-          // y las respuestas forzadas del rival en el medio) para confirmar que esta
-          // es la alineacion correcta.
-          let allOk = true;
-          for(let i=1;i<solutionMoves.length;i++){
-            const m = solutionMoves[i];
-            try{
-              const mv = g.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'});
-              if(!mv){ allOk=false;break; }
-            } catch(e){ allOk=false;break; }
+          if(esTemaDeMate && g.in_check()) return null; // el alumno tiene que dar jaque, no arrancar en jaque
+          const estudianteColor = g.turn();
+          for(const m of movesParaResolver){
+            let mv = null;
+            try{ mv = g.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'}); }catch(e){ mv = null; }
+            if(!mv) return null;
           }
-          if(!allOk) continue;
-          if(esTemaDeMate){
-            // El jaque mate final tiene que caer sobre el RIVAL, nunca sobre el alumno.
-            // Si el conteo de jugadas quedo corrido, a veces igual se arma una secuencia
-            // legal que termina en jaque mate, pero al reves (el alumno queda mateado).
-            if(!g.in_checkmate() || g.turn()!==rivalColor) continue;
-          }
+          if(esTemaDeMate && (!g.in_checkmate() || g.turn()===estudianteColor)) return null; // el mate final tiene que caer sobre el rival, no sobre el alumno
 
-          // Esta alineacion funciona: reconstruimos la posicion real de partida
-          // (justo despues de la jugada del rival, antes de que resuelva el alumno).
           const g2 = new Chess();
           for(let i=0;i<plyCount;i++){ g2.move(sanMoves[i]); }
-          g2.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'});
-          tempGame = g2;
-          solution = solutionMoves.slice(1).join(' ');
-          encontrado = true;
-          break;
+          if(incluyeJugadaDelRival){
+            const trigger = solutionMoves[0];
+            g2.move({from:trigger.substring(0,2), to:trigger.substring(2,4), promotion:trigger.length>4?trigger[4]:'q'});
+          }
+          return { tempGame: g2, solution: movesParaResolver.join(' ') };
+        }
+
+        for(const plyCount of candidatos){
+          let resultado = intentarAlineacion(plyCount, false);
+          if(!resultado) resultado = intentarAlineacion(plyCount, true);
+          if(resultado){ tempGame = resultado.tempGame; solution = resultado.solution; encontrado = true; break; }
         }
 
         if(!encontrado){ triggerFail++; console.warn('Lichess import: ninguna alineacion de jugadas funciono', {initialPly:puzzle.initialPly, solutionMoves, pgn:game.pgn}); continue; }
@@ -2455,7 +2442,7 @@ async function importFromLichessWithToken(){
   if(networkErrors>0) detalle.push(`${networkErrors} error de red/CORS`);
   let diag = '';
   if(entriesFound < qty){ diag = ` [diagnóstico: la respuesta trajo ${entriesFound} puzzle(s), claves: ${responseKeys}]`; }
-  status.textContent = `[v6] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
+  status.textContent = `[v7] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
   btn.disabled=false;
   if(imported>0) renderAdminExercises();
 }
