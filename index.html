@@ -875,7 +875,15 @@ let currentUser = null, currentExercise = null, solutionVisible = false;
 let _currentCategory = null, _currentLevel = null;
 
 async function dbGet(table, q='') { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}?${q}`, {headers:H})).json(); }
-async function dbInsert(table, data) { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {method:'POST',headers:H,body:JSON.stringify(data)})).json(); }
+async function dbInsert(table, data) {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {method:'POST',headers:H,body:JSON.stringify(data)});
+  const body = await resp.json().catch(()=>null);
+  if(!resp.ok){
+    console.error('dbInsert fallo', table, resp.status, body);
+    return { __error: true, status: resp.status, ...(body||{}) };
+  }
+  return body;
+}
 async function dbUpdate(table, id, data) { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'PATCH',headers:H,body:JSON.stringify(data)})).json(); }
 async function dbDelete(table, id) { await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'DELETE',headers:H}); }
 
@@ -948,7 +956,11 @@ async function doRegister() {
     showErr('reg-error','Ya existe una cuenta con ese email.'); return;
   }
   const res = await dbInsert('users',{name,email,password:pass,role:'student',plan:'free',approved:false});
-  if (!res||res.error){showErr('reg-error','Error al crear la cuenta.');return}
+  if (!res || res.__error || !Array.isArray(res) || res.length===0){
+    console.error('Registro fallido:', res);
+    showErr('reg-error','No se pudo crear la cuenta. Probá de nuevo en un momento, o avisale al profesor.');
+    return;
+  }
   hideErr('reg-error');
   document.getElementById('register-box').innerHTML = `
     <div style="text-align:center;padding:1rem 0">
