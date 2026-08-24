@@ -3317,6 +3317,10 @@ async function openLiveLobby(){
     renderLiveLobby();
   });
 
+  liveLobbyChannel.on('broadcast', { event: 'challenge' }, ({payload}) => handleIncomingChallenge(payload));
+  liveLobbyChannel.on('broadcast', { event: 'challenge-cancel' }, ({payload}) => handleChallengeCancel(payload));
+  liveLobbyChannel.on('broadcast', { event: 'challenge-response' }, ({payload}) => handleChallengeResponse(payload));
+
   liveLobbyChannel.subscribe(async (status)=>{
     if(status === 'SUBSCRIBED'){
       await liveLobbyChannel.track({
@@ -3334,6 +3338,12 @@ function leaveLiveLobby(){
     sbClient.removeChannel(liveLobbyChannel);
     liveLobbyChannel = null;
   }
+  if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
+  outgoingChallengeId = null;
+  incomingChallenge = null;
+  const ocm = document.getElementById('outgoing-challenge-modal'); if(ocm) ocm.style.display='none';
+  const icm = document.getElementById('incoming-challenge-modal'); if(icm) icm.style.display='none';
+  const cpm = document.getElementById('challenge-picker-modal'); if(cpm) cpm.style.display='none';
 }
 
 function renderLiveLobby(){
@@ -3360,13 +3370,120 @@ function renderLiveLobby(){
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;display:flex;align-items:center;gap:0.7rem">
           <div style="width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">${u.avatar||'♟'}</div>
           <div style="flex:1;font-size:0.9rem;color:var(--cream);font-weight:600">${u.name||'Alumno'}</div>
-          <button class="btn btn-add" style="padding:0.4rem 0.9rem;font-size:0.8rem" onclick="alert('En la próxima etapa vamos a poder desafiar a ${(u.name||'').replace(/'/g,"")} ¡acá!')">Desafiar</button>
+          <button class="btn btn-add" style="padding:0.4rem 0.9rem;font-size:0.8rem" onclick='openChallengePicker(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>Desafiar</button>
         </div>`;
     });
     html += `</div>`;
   }
 
   container.innerHTML = html;
+}
+
+// ── Flujo de desafío: elegir tiempo → enviar → esperar respuesta ──
+let challengeTargetId = null, challengeTargetName = null, challengeTcId = 'none';
+let outgoingChallengeId = null, outgoingTimeout = null;
+let incomingChallenge = null; // { challengeId, fromId, fromName, tcId }
+
+function openChallengePicker(targetId, targetName){
+  challengeTargetId = targetId;
+  challengeTargetName = targetName;
+  challengeTcId = 'none';
+  document.getElementById('challenge-target-name').textContent = targetName;
+  const picker = document.getElementById('challenge-tc-picker');
+  picker.innerHTML = TIME_CONTROLS.map(tc=>`
+    <div onclick="selectChallengeTc('${tc.id}')" id="challenge-tc-btn-${tc.id}"
+      style="background:var(--surface2);border:1.5px solid ${tc.id==='none'?'var(--gold)':'var(--border)'};border-radius:6px;padding:0.5rem 0.3rem;text-align:center;cursor:pointer;font-size:0.78rem;font-weight:600;color:${tc.id==='none'?'var(--gold)':'var(--cream)'}">${tc.label}</div>`).join('');
+  document.getElementById('challenge-picker-modal').style.display = 'flex';
+}
+function selectChallengeTc(id){
+  challengeTcId = id;
+  TIME_CONTROLS.forEach(tc=>{
+    const el = document.getElementById('challenge-tc-btn-'+tc.id);
+    if(el){
+      el.style.borderColor = tc.id===id ? 'var(--gold)' : 'var(--border)';
+      el.style.color = tc.id===id ? 'var(--gold)' : 'var(--cream)';
+    }
+  });
+}
+function closeChallengePicker(){
+  document.getElementById('challenge-picker-modal').style.display = 'none';
+}
+
+function confirmSendChallenge(){
+  if(!liveLobbyChannel || !challengeTargetId) return;
+  outgoingChallengeId = 'ch_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  liveLobbyChannel.send({
+    type: 'broadcast', event: 'challenge',
+    payload: { challengeId: outgoingChallengeId, toId: challengeTargetId, fromId: String(currentUser.id), fromName: currentUser.name, tcId: challengeTcId }
+  });
+  closeChallengePicker();
+  document.getElementById('outgoing-target-name').textContent = challengeTargetName;
+  document.getElementById('outgoing-challenge-modal').style.display = 'flex';
+  if(outgoingTimeout) clearTimeout(outgoingTimeout);
+  outgoingTimeout = setTimeout(()=>{
+    if(outgoingChallengeId){ cancelOutgoingChallenge(true); }
+  }, 30000);
+}
+
+function cancelOutgoingChallenge(expired){
+  if(liveLobbyChannel && outgoingChallengeId){
+    liveLobbyChannel.send({ type:'broadcast', event:'challenge-cancel', payload:{ challengeId: outgoingChallengeId, toId: challengeTargetId } });
+  }
+  if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
+  outgoingChallengeId = null;
+  document.getElementById('outgoing-challenge-modal').style.display = 'none';
+  if(expired){ showLiveToast(`${challengeTargetName} no respondió a tiempo.`); }
+}
+
+function handleIncomingChallenge(payload){
+  if(String(payload.toId) !== String(currentUser.id)) return;
+  // Si ya hay un desafío entrante sin responder, el nuevo espera (nos quedamos con el primero)
+  if(incomingChallenge) return;
+  incomingChallenge = payload;
+  const tc = TIME_CONTROLS.find(t=>t.id===payload.tcId) || TIME_CONTROLS[0];
+  document.getElementById('incoming-from-name').textContent = payload.fromName;
+  document.getElementById('incoming-tc-label').textContent = `Ritmo de juego: ${tc.label}`;
+  document.getElementById('incoming-challenge-modal').style.display = 'flex';
+}
+
+function handleChallengeCancel(payload){
+  if(incomingChallenge && incomingChallenge.challengeId === payload.challengeId){
+    incomingChallenge = null;
+    document.getElementById('incoming-challenge-modal').style.display = 'none';
+    showLiveToast('El desafío fue cancelado.');
+  }
+}
+
+function respondChallenge(accepted){
+  if(!incomingChallenge) return;
+  const ch = incomingChallenge;
+  liveLobbyChannel.send({
+    type:'broadcast', event:'challenge-response',
+    payload: { challengeId: ch.challengeId, toId: ch.fromId, fromId: String(currentUser.id), fromName: currentUser.name, accepted, tcId: ch.tcId }
+  });
+  incomingChallenge = null;
+  document.getElementById('incoming-challenge-modal').style.display = 'none';
+  if(accepted){
+    showLiveToast(`¡Aceptaste el desafío de ${ch.fromName}! (la partida en sí la armamos en la próxima etapa)`);
+  }
+}
+
+function handleChallengeResponse(payload){
+  if(String(payload.toId) !== String(currentUser.id)) return;
+  if(payload.challengeId !== outgoingChallengeId) return;
+  if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
+  outgoingChallengeId = null;
+  document.getElementById('outgoing-challenge-modal').style.display = 'none';
+  if(payload.accepted){
+    showLiveToast(`¡${payload.fromName} aceptó tu desafío! (la partida en sí la armamos en la próxima etapa)`);
+  } else {
+    showLiveToast(`${payload.fromName} rechazó el desafío.`);
+  }
+}
+
+function showLiveToast(msg){
+  // Reutiliza una alerta simple por ahora; se puede cambiar por un toast más lindo después
+  alert(msg);
 }
 
 function renderPlayBot(){
@@ -4153,6 +4270,39 @@ function formatDuration(totalSeconds){
       <button onclick="closeStudentProgressModal()" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
     </div>
     <div id="student-progress-body"></div>
+  </div>
+</div>
+<!-- Elegir tiempo y enviar desafío -->
+<div id="challenge-picker-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.4rem;max-width:360px;width:100%">
+    <h3 style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.05rem;margin:0 0 0.3rem">Desafiar a <span id="challenge-target-name"></span></h3>
+    <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:1rem 0 0.5rem">Elegí el tiempo de juego</div>
+    <div id="challenge-tc-picker" style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:1.2rem"></div>
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn" style="flex:1;background:var(--surface2)" onclick="closeChallengePicker()">Cancelar</button>
+      <button class="btn btn-add" style="flex:1" onclick="confirmSendChallenge()">Enviar desafío</button>
+    </div>
+  </div>
+</div>
+<!-- Esperando respuesta del desafiado -->
+<div id="outgoing-challenge-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.6rem;max-width:340px;width:100%;text-align:center">
+    <div class="spinner" style="margin:0 auto 0.8rem"></div>
+    <div style="font-size:0.95rem;color:var(--cream);margin-bottom:0.3rem">Esperando respuesta de <b id="outgoing-target-name" style="color:var(--gold)"></b>...</div>
+    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:1.2rem">El desafío se cancela solo si no responde en 30 segundos.</div>
+    <button class="btn" style="background:var(--surface2)" onclick="cancelOutgoingChallenge()">Cancelar</button>
+  </div>
+</div>
+<!-- Desafío recibido -->
+<div id="incoming-challenge-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.6rem;max-width:340px;width:100%;text-align:center">
+    <div style="font-size:2rem;margin-bottom:0.5rem">⚔️</div>
+    <div style="font-size:0.95rem;color:var(--cream);margin-bottom:0.3rem"><b id="incoming-from-name" style="color:var(--gold)"></b> te desafió a jugar</div>
+    <div id="incoming-tc-label" style="font-size:0.78rem;color:var(--muted);margin-bottom:1.2rem"></div>
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn" style="flex:1;background:var(--surface2)" onclick="respondChallenge(false)">Rechazar</button>
+      <button class="btn btn-add" style="flex:1" onclick="respondChallenge(true)">Aceptar</button>
+    </div>
   </div>
 </div>
 <div id="edit-modal" class="modal-overlay" style="display:none">
