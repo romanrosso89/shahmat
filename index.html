@@ -199,6 +199,8 @@
   .home-card.card-racha .home-card-stat{color:#ff9a4d}
   .home-card.card-bot{background:linear-gradient(135deg,#0e1a2e,#0a1020);border-color:#3a5a8e}
   .home-card.card-bot .home-card-stat{color:#7ab8ff}
+  .home-card.card-live{background:linear-gradient(135deg,#0e2e2a,#0a1c1a);border-color:#3ac8b0}
+  .home-card.card-live .home-card-stat{color:#5ae8cc}
   .empty-state .icon{font-size:2.5rem;margin-bottom:0.8rem}
   .loading{text-align:center;padding:2rem;color:var(--muted);font-size:0.9rem}
   .spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:0.5rem;vertical-align:middle}
@@ -377,6 +379,7 @@
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -429,6 +432,12 @@
         <div class="home-card-title">Jugar contra el Bot</div>
         <div class="home-card-desc">Elegí el nivel y jugá una partida libre</div>
         <div class="home-card-stat">10 niveles disponibles</div>
+      </div>
+      <div class="home-card card-live full-width" onclick="showStudentSection('play-live')">
+        <div class="home-card-icon">🌐</div>
+        <div class="home-card-title">Jugar en vivo</div>
+        <div class="home-card-desc">Desafiá a otros alumnos conectados ahora mismo</div>
+        <div class="home-card-stat" id="home-live-stat">Tocá para ver quién está conectado</div>
       </div>
       <div class="home-card card-progreso" onclick="showStudentSection('progress')">
         <div class="home-card-icon">📊</div>
@@ -547,6 +556,10 @@
     <div id="tab-play-bot" class="content" style="display:none">
       <p class="section-title">Jugar contra el Bot</p>
       <div id="play-bot-container"></div>
+    </div>
+    <div id="tab-play-live" class="content" style="display:none">
+      <p class="section-title">Jugar en vivo</p>
+      <div id="live-lobby-container"></div>
     </div>
     <div id="tab-racha" class="content" style="display:none">
       <p class="section-title">Mi racha</p>
@@ -777,6 +790,8 @@
 const SUPABASE_URL = 'https://zipzdmlrgctlioqimueg.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppcHpkbWxyZ2N0bGlvcWltdWVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwMjk3MzIsImV4cCI6MjA5NTYwNTczMn0.DbKBeyZC8zkEtxwmnQoKgz-SGttlJTNvnFj0iIx57_M';
 const H = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
+// Cliente de Supabase (necesario para "tiempo real": sala de espera y partidas en vivo)
+const sbClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 // ── PIEZAS: varios modelos disponibles (mismos sets que usa Lichess) ──
 const PIECE_SETS = {
   cburnett: { name:'Clásico (Cburnett)', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/cburnett/' },
@@ -944,7 +959,7 @@ async function doRegister() {
     </div>`;
 }
 
-function doLogout(){endSessionTracking();currentUser=null;showScreen('screen-login');showLogin();}
+function doLogout(){endSessionTracking();leaveLiveLobby();currentUser=null;showScreen('screen-login');showLogin();}
 
 // Manejo del botón atrás del navegador
 window.addEventListener('popstate', function(e){
@@ -1020,11 +1035,13 @@ function _renderNav(fn, block){
 function backToHome(){
   history.pushState({page:'home'},'');
   if(_countdownInterval){ clearInterval(_countdownInterval); _countdownInterval=null; }
+  leaveLiveLobby();
   document.getElementById('student-home').style.display='block';
   document.getElementById('student-section').style.display='none';
 }
 
 function showStudentSection(section){
+  if(section!=='play-live') leaveLiveLobby();
   history.pushState({page:'student-section',section},'');
   document.getElementById('student-home').style.display='none';
   const sec = document.getElementById('student-section');
@@ -1037,6 +1054,7 @@ function showStudentSection(section){
   document.getElementById('tab-ranking').style.display='none';
   document.getElementById('tab-racha').style.display='none';
   document.getElementById('tab-play-bot').style.display='none';
+  document.getElementById('tab-play-live').style.display='none';
   document.getElementById('tab-achievements').style.display='none';
 
   if(section==='exercises'){
@@ -1073,6 +1091,10 @@ function showStudentSection(section){
     document.getElementById('section-title-label').textContent='Jugar contra el Bot';
     document.getElementById('tab-play-bot').style.cssText='display:flex;flex-direction:column';
     renderPlayBot();
+  } else if(section==='play-live'){
+    document.getElementById('section-title-label').textContent='Jugar en vivo';
+    document.getElementById('tab-play-live').style.cssText='display:flex;flex-direction:column';
+    openLiveLobby();
   } else if(section==='racha'){
     document.getElementById('section-title-label').textContent='Mi racha';
     document.getElementById('tab-racha').style.cssText='display:flex;flex-direction:column';
@@ -3252,6 +3274,88 @@ const BOT_LEVELS = [
   { id:9,  name:'Nivel 9',  desc:'Experto',      skill:18, depth:12, movetime:900  },
   { id:10, name:'Nivel 10', desc:'Maestro',      skill:20, depth:14, movetime:1200 },
 ];
+
+// ══════════════════════════════════════════════════════════
+// JUGAR EN VIVO — Etapa 1: sala de espera (quién está conectado)
+// ══════════════════════════════════════════════════════════
+let liveLobbyChannel = null;
+let liveOnlineUsers = {}; // { userId: {id, name, avatar} }
+
+async function openLiveLobby(){
+  const container = document.getElementById('live-lobby-container');
+  if(!sbClient){
+    container.innerHTML = '<p style="color:var(--muted);font-size:0.85rem">No se pudo cargar el sistema de tiempo real. Revisá tu conexión e intentá de nuevo.</p>';
+    return;
+  }
+  container.innerHTML = '<div class="loading"><span class="spinner"></span>Conectando a la sala de espera...</div>';
+
+  if(liveLobbyChannel){ await sbClient.removeChannel(liveLobbyChannel); liveLobbyChannel = null; }
+
+  liveLobbyChannel = sbClient.channel('sala-de-espera', {
+    config: { presence: { key: String(currentUser.id) } }
+  });
+
+  liveLobbyChannel.on('presence', { event: 'sync' }, () => {
+    const state = liveLobbyChannel.presenceState();
+    liveOnlineUsers = {};
+    Object.keys(state).forEach(key=>{
+      const entries = state[key];
+      if(entries && entries.length){ liveOnlineUsers[key] = entries[0]; }
+    });
+    renderLiveLobby();
+  });
+
+  liveLobbyChannel.subscribe(async (status)=>{
+    if(status === 'SUBSCRIBED'){
+      await liveLobbyChannel.track({
+        id: currentUser.id,
+        name: currentUser.name,
+        avatar: currentUser.avatar || '♟'
+      });
+      renderLiveLobby();
+    }
+  });
+}
+
+function leaveLiveLobby(){
+  if(liveLobbyChannel){
+    sbClient.removeChannel(liveLobbyChannel);
+    liveLobbyChannel = null;
+  }
+}
+
+function renderLiveLobby(){
+  const container = document.getElementById('live-lobby-container');
+  if(!container) return;
+
+  const others = Object.values(liveOnlineUsers).filter(u => String(u.id) !== String(currentUser.id));
+
+  let html = `
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+      <span style="width:9px;height:9px;border-radius:50%;background:#5ae89a;box-shadow:0 0 6px #5ae89a;display:inline-block"></span>
+      <span style="font-size:0.8rem;color:var(--muted)">Estás conectado — ${others.length} alumno${others.length!==1?'s':''} más en la sala</span>
+    </div>`;
+
+  if(!others.length){
+    html += `<div style="text-align:center;padding:2rem 1rem;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:0.5rem">🕓</div>
+      <div style="font-size:0.85rem">Todavía no hay nadie más conectado.<br>Esperá a que otro alumno entre a "Jugar en vivo".</div>
+    </div>`;
+  } else {
+    html += `<div style="display:flex;flex-direction:column;gap:0.5rem">`;
+    others.forEach(u=>{
+      html += `
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;display:flex;align-items:center;gap:0.7rem">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">${u.avatar||'♟'}</div>
+          <div style="flex:1;font-size:0.9rem;color:var(--cream);font-weight:600">${u.name||'Alumno'}</div>
+          <button class="btn btn-add" style="padding:0.4rem 0.9rem;font-size:0.8rem" onclick="alert('En la próxima etapa vamos a poder desafiar a ${(u.name||'').replace(/'/g,"")} ¡acá!')">Desafiar</button>
+        </div>`;
+    });
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
 
 function renderPlayBot(){
   const container = document.getElementById('play-bot-container');
