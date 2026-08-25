@@ -560,6 +560,36 @@
     <div id="tab-play-live" class="content" style="display:none">
       <p class="section-title">Jugar en vivo</p>
       <div id="live-lobby-container"></div>
+      <div id="live-game-area" style="display:none">
+        <div id="live-clocks-wrap" style="display:none;justify-content:space-between;gap:0.6rem;margin-bottom:0.6rem">
+          <div id="live-clock-opponent" style="flex:1;text-align:center;padding:0.5rem;border-radius:6px;background:var(--surface2);border:1.5px solid var(--border)">
+            <div id="live-opponent-name" style="font-size:0.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Rival</div>
+            <div id="live-clock-opponent-time" style="font-family:'DM Sans',monospace;font-size:1.3rem;font-weight:700;color:var(--cream)">--:--</div>
+          </div>
+          <div id="live-clock-player" style="flex:1;text-align:center;padding:0.5rem;border-radius:6px;background:var(--surface2);border:1.5px solid var(--border)">
+            <div style="font-size:0.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Vos</div>
+            <div id="live-clock-player-time" style="font-family:'DM Sans',monospace;font-size:1.3rem;font-weight:700;color:var(--cream)">--:--</div>
+          </div>
+        </div>
+        <div id="live-material-bar" style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;margin-bottom:0.4rem;padding:0.2rem 0.4rem;min-height:1.4rem">
+          <div id="live-material-opponent" style="font-size:0.9rem;color:var(--muted);flex:1"></div>
+          <div id="live-material-player" style="font-size:0.9rem;color:var(--muted);flex:1;text-align:right"></div>
+        </div>
+        <div id="live-status-bar" style="text-align:center;padding:0.5rem;font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem"></div>
+        <div id="live-board-wrap" style="display:flex;justify-content:center;align-items:flex-start;gap:0.8rem;flex-wrap:wrap;padding:0 0.5rem;margin-bottom:0.8rem">
+          <div style="position:relative;width:100%;max-width:360px;border:4px solid var(--gold);border-radius:4px;box-shadow:0 0 16px rgba(201,168,76,0.35)">
+            <div id="live-chess-board" style="display:grid;grid-template-columns:repeat(8,1fr);width:100%;aspect-ratio:1"></div>
+          </div>
+          <div class="mate-side-panel" id="live-mate-side-panel">
+            <div class="mate-title" id="live-mate-title">♚ Partida terminada</div>
+            <div class="mate-sub" id="live-mate-side-sub"></div>
+          </div>
+        </div>
+        <div id="live-game-buttons" style="display:flex;gap:0.5rem">
+          <button onclick="resignLiveGame()" id="live-resign-btn" style="flex:1;padding:0.6rem;background:var(--surface2);color:#e08080;border:1px solid rgba(224,128,128,0.4);border-radius:6px;font-size:0.85rem;cursor:pointer">🏳 Rendirse</button>
+        </div>
+        <button onclick="leaveLiveGame()" id="live-back-btn" style="display:none;width:100%;margin-top:0.5rem;padding:0.6rem;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;cursor:pointer">↺ Volver a la sala</button>
+      </div>
     </div>
     <div id="tab-racha" class="content" style="display:none">
       <p class="section-title">Mi racha</p>
@@ -884,7 +914,15 @@ async function dbInsert(table, data) {
   }
   return body;
 }
-async function dbUpdate(table, id, data) { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'PATCH',headers:H,body:JSON.stringify(data)})).json(); }
+async function dbUpdate(table, id, data) {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'PATCH',headers:H,body:JSON.stringify(data)});
+  const body = await resp.json().catch(()=>null);
+  if(!resp.ok){
+    console.error('dbUpdate fallo', table, id, resp.status, body);
+    return { __error: true, status: resp.status, ...(body||{}) };
+  }
+  return body;
+}
 async function dbDelete(table, id) { await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'DELETE',headers:H}); }
 
 async function openExercise(ex){
@@ -1664,6 +1702,10 @@ function startPieceDrag(e, fromSquare, boardType){
     selectedSquare = fromSquare;
     possibleMoves = chessGame.moves({square:fromSquare,verbose:true}).map(m=>m.to);
     drawBoard();
+  } else if(boardType==='live'){
+    liveSelectedSquare = fromSquare;
+    livePossibleMoves = liveChessGame.moves({square:fromSquare,verbose:true}).map(m=>m.to);
+    drawLiveBoard();
   } else {
     botSelectedSquare = fromSquare;
     botPossibleMoves = botChessGame.moves({square:fromSquare,verbose:true}).map(m=>m.to);
@@ -1704,6 +1746,12 @@ function onDragPointerUp(e){
       makeMove(from, dropSquare);
     } else {
       selectedSquare=null; possibleMoves=[]; drawBoard();
+    }
+  } else if(boardType==='live'){
+    if(dropSquare && livePossibleMoves.includes(dropSquare)){
+      makeLivePlayerMove(from, dropSquare);
+    } else {
+      liveSelectedSquare=null; livePossibleMoves=[]; drawLiveBoard();
     }
   } else {
     if(dropSquare && botPossibleMoves.includes(dropSquare)){
@@ -3320,6 +3368,7 @@ async function openLiveLobby(){
   liveLobbyChannel.on('broadcast', { event: 'challenge' }, ({payload}) => handleIncomingChallenge(payload));
   liveLobbyChannel.on('broadcast', { event: 'challenge-cancel' }, ({payload}) => handleChallengeCancel(payload));
   liveLobbyChannel.on('broadcast', { event: 'challenge-response' }, ({payload}) => handleChallengeResponse(payload));
+  liveLobbyChannel.on('broadcast', { event: 'game-start' }, ({payload}) => handleGameStart(payload));
 
   liveLobbyChannel.subscribe(async (status)=>{
     if(status === 'SUBSCRIBED'){
@@ -3334,6 +3383,7 @@ async function openLiveLobby(){
 }
 
 function leaveLiveLobby(){
+  if(liveGameId){ leaveLiveGame(); }
   if(liveLobbyChannel){
     sbClient.removeChannel(liveLobbyChannel);
     liveLobbyChannel = null;
@@ -3437,6 +3487,7 @@ function cancelOutgoingChallenge(expired){
 
 function handleIncomingChallenge(payload){
   if(String(payload.toId) !== String(currentUser.id)) return;
+  if(liveGameId) return; // ya está jugando una partida, no se puede recibir otro desafío
   // Si ya hay un desafío entrante sin responder, el nuevo espera (nos quedamos con el primero)
   if(incomingChallenge) return;
   incomingChallenge = payload;
@@ -3454,36 +3505,406 @@ function handleChallengeCancel(payload){
   }
 }
 
-function respondChallenge(accepted){
+async function respondChallenge(accepted){
   if(!incomingChallenge) return;
   const ch = incomingChallenge;
-  liveLobbyChannel.send({
-    type:'broadcast', event:'challenge-response',
-    payload: { challengeId: ch.challengeId, toId: ch.fromId, fromId: String(currentUser.id), fromName: currentUser.name, accepted, tcId: ch.tcId }
-  });
   incomingChallenge = null;
   document.getElementById('incoming-challenge-modal').style.display = 'none';
-  if(accepted){
-    showLiveToast(`¡Aceptaste el desafío de ${ch.fromName}! (la partida en sí la armamos en la próxima etapa)`);
+
+  if(!accepted){
+    liveLobbyChannel.send({
+      type:'broadcast', event:'challenge-response',
+      payload: { challengeId: ch.challengeId, toId: ch.fromId, fromId: String(currentUser.id), fromName: currentUser.name, accepted:false, tcId: ch.tcId }
+    });
+    return;
   }
+
+  // El que acepta es quien crea la partida en la base de datos.
+  const tc = TIME_CONTROLS.find(t=>t.id===ch.tcId) || TIME_CONTROLS[0];
+  const iAmWhite = Math.random() < 0.5;
+  const whiteId = iAmWhite ? String(currentUser.id) : String(ch.fromId);
+  const whiteName = iAmWhite ? currentUser.name : ch.fromName;
+  const blackId = iAmWhite ? String(ch.fromId) : String(currentUser.id);
+  const blackName = iAmWhite ? ch.fromName : currentUser.name;
+  const timeLeft = tc.base; // null si es "Sin límite"
+
+  const res = await dbInsert('live_games', {
+    white_id: whiteId, white_name: whiteName,
+    black_id: blackId, black_name: blackName,
+    time_control: tc.id,
+    white_time_left: timeLeft,
+    black_time_left: timeLeft
+  });
+  if(!res || res.__error || !Array.isArray(res) || !res.length){
+    console.error('No se pudo crear la partida en vivo:', res);
+    alert('No se pudo crear la partida. Probá desafiar de nuevo en un momento.');
+    return;
+  }
+  const gameRow = res[0];
+  liveLobbyChannel.send({ type:'broadcast', event:'game-start', payload: { gameId: gameRow.id, toId: ch.fromId } });
+  enterLiveGame(gameRow.id);
+}
+
+function handleGameStart(payload){
+  if(String(payload.toId) !== String(currentUser.id)) return;
+  if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
+  outgoingChallengeId = null;
+  document.getElementById('outgoing-challenge-modal').style.display = 'none';
+  enterLiveGame(payload.gameId);
 }
 
 function handleChallengeResponse(payload){
   if(String(payload.toId) !== String(currentUser.id)) return;
   if(payload.challengeId !== outgoingChallengeId) return;
+  if(payload.accepted) return; // la aceptación real llega por "game-start"
   if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
   outgoingChallengeId = null;
   document.getElementById('outgoing-challenge-modal').style.display = 'none';
-  if(payload.accepted){
-    showLiveToast(`¡${payload.fromName} aceptó tu desafío! (la partida en sí la armamos en la próxima etapa)`);
-  } else {
-    showLiveToast(`${payload.fromName} rechazó el desafío.`);
-  }
+  showLiveToast(`${payload.fromName} rechazó el desafío.`);
 }
 
 function showLiveToast(msg){
   // Reutiliza una alerta simple por ahora; se puede cambiar por un toast más lindo después
   alert(msg);
+}
+
+// ══════════════════════════════════════════════════════════
+// JUGAR EN VIVO — Etapa 3: la partida en sí (tiempo real)
+// ══════════════════════════════════════════════════════════
+let liveChessGame = null;
+let liveGameId = null;
+let liveGameRow = null;
+let livePlayerColor = null;
+let liveSelectedSquare = null;
+let livePossibleMoves = [];
+let liveLastMove = null;
+let liveGameChannel = null;
+let livePresenceChannel = null;
+let liveClockInterval = null;
+let liveDisconnectTimer = null;
+let liveOpponentDisconnected = false;
+let liveGameEnteredAt = 0;
+let liveGameOver = false;
+
+const LIVE_RESULT_LABELS = {
+  checkmate: 'Jaque mate', timeout: 'Se acabó el tiempo', resignation: 'Abandono',
+  disconnect: 'El rival no volvió a conectarse', stalemate: 'Ahogado', draw: 'Tablas'
+};
+
+async function enterLiveGame(gameId){
+  document.getElementById('live-lobby-container').style.display = 'none';
+  document.getElementById('live-game-area').style.display = 'block';
+  document.getElementById('live-status-bar').innerHTML = '<span class="spinner"></span>Cargando partida...';
+
+  const rows = await dbGet('live_games', `id=eq.${gameId}`);
+  if(!rows || !rows.length){
+    alert('No se pudo cargar la partida.');
+    leaveLiveGame();
+    return;
+  }
+  liveGameRow = rows[0];
+  liveGameId = gameId;
+  livePlayerColor = String(liveGameRow.white_id) === String(currentUser.id) ? 'w' : 'b';
+  liveChessGame = new Chess();
+  liveChessGame.load(liveGameRow.fen);
+  liveGameOver = liveGameRow.status === 'finished';
+  liveSelectedSquare = null; livePossibleMoves = []; liveLastMove = null;
+  liveOpponentDisconnected = false;
+  liveGameEnteredAt = Date.now();
+
+  const oppName = livePlayerColor==='w' ? liveGameRow.black_name : liveGameRow.white_name;
+  document.getElementById('live-opponent-name').textContent = oppName;
+
+  const tc = TIME_CONTROLS.find(t=>t.id===liveGameRow.time_control) || TIME_CONTROLS[0];
+  document.getElementById('live-clocks-wrap').style.display = tc.base==null ? 'none' : 'flex';
+
+  document.getElementById('live-resign-btn').style.display = 'block';
+  document.getElementById('live-back-btn').style.display = 'none';
+  document.getElementById('live-mate-side-panel').classList.remove('show','win','lose');
+
+  // Suscripción en tiempo real a esta partida puntual
+  if(liveGameChannel){ sbClient.removeChannel(liveGameChannel); }
+  liveGameChannel = sbClient.channel('live-game-'+gameId)
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'live_games', filter:`id=eq.${gameId}` }, (payload)=>{
+      onLiveGameRowChange(payload.new);
+    })
+    .subscribe();
+
+  // Presencia por partida (para detectar desconexión del rival)
+  if(livePresenceChannel){ sbClient.removeChannel(livePresenceChannel); }
+  livePresenceChannel = sbClient.channel('live-presence-'+gameId, { config:{ presence:{ key:String(currentUser.id) } } });
+  livePresenceChannel.on('presence', { event:'sync' }, ()=>{
+    if(Date.now() - liveGameEnteredAt < 6000) return; // margen inicial para que ambos se conecten
+    const state = livePresenceChannel.presenceState();
+    const opponentId = livePlayerColor==='w' ? liveGameRow.black_id : liveGameRow.white_id;
+    const opponentPresent = !!state[String(opponentId)];
+    if(opponentPresent){
+      if(liveDisconnectTimer){ clearTimeout(liveDisconnectTimer); liveDisconnectTimer = null; }
+      liveOpponentDisconnected = false;
+    } else if(!liveGameOver && !liveDisconnectTimer){
+      liveOpponentDisconnected = true;
+      liveDisconnectTimer = setTimeout(()=>{
+        if(!liveGameOver){
+          dbUpdate('live_games', liveGameId, { status:'finished', result: livePlayerColor==='w'?'white':'black', result_reason:'disconnect' });
+        }
+      }, 30000);
+    }
+  });
+  livePresenceChannel.subscribe(async (status)=>{ if(status==='SUBSCRIBED'){ await livePresenceChannel.track({ id: currentUser.id }); } });
+
+  if(liveClockInterval) clearInterval(liveClockInterval);
+  liveClockInterval = setInterval(tickLiveClockDisplay, 1000);
+
+  drawLiveBoard();
+  if(liveGameOver) showLiveGameEndPanel(liveGameRow);
+}
+
+function onLiveGameRowChange(newRow){
+  if(!liveGameId || String(newRow.id) !== String(liveGameId)) return;
+  liveGameRow = newRow;
+  liveChessGame.load(newRow.fen);
+  const uciMoves = (newRow.moves||'').trim().split(/\s+/).filter(m=>m.length>=4);
+  if(uciMoves.length){
+    const last = uciMoves[uciMoves.length-1];
+    liveLastMove = { from:last.substring(0,2), to:last.substring(2,4) };
+  }
+  liveSelectedSquare = null; livePossibleMoves = [];
+  const wasOver = liveGameOver;
+  liveGameOver = newRow.status === 'finished';
+  drawLiveBoard();
+  if(liveGameOver && !wasOver) showLiveGameEndPanel(newRow);
+}
+
+function drawLiveBoard(){
+  const container = document.getElementById('live-chess-board');
+  if(!container||!liveChessGame) return;
+  updateLiveMaterial();
+  updateLiveStatusBar();
+  container.innerHTML = '';
+  const board = liveChessGame.board();
+  const flipped = livePlayerColor === 'b';
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const boardR = flipped?(7-r):r;
+      const boardC = flipped?(7-c):c;
+      const isLight = (boardR+boardC)%2===0;
+      const sqName = FILES[boardC]+(8-boardR);
+      const piece = board[boardR][boardC];
+      const sq = document.createElement('div');
+      sq.dataset.square=sqName;
+      sq.style.cssText=`aspect-ratio:1;position:relative;display:flex;align-items:center;justify-content:center;background:${isLight?'#f0d9b5':'#b58863'};cursor:pointer`;
+      if(liveSelectedSquare===sqName) sq.style.outline='3px solid rgba(255,255,0,0.7)';
+      if(liveLastMove&&(liveLastMove.from===sqName||liveLastMove.to===sqName)) sq.style.background=isLight?'#cdd16f':'#aaa23a';
+      if(livePossibleMoves.includes(sqName)){ const dot=document.createElement('div');dot.style.cssText='position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(0,0,0,0.25);pointer-events:none';sq.appendChild(dot); }
+      if(c===0){
+        const rc=document.createElement('span');
+        rc.style.cssText='position:absolute;top:1px;left:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+((boardR%2===0)?'var(--sq-dark)':'var(--sq-light)');
+        rc.textContent = 8-boardR;
+        sq.appendChild(rc);
+      }
+      if(r===7){
+        const fc=document.createElement('span');
+        fc.style.cssText='position:absolute;bottom:1px;right:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+((boardC%2===1)?'var(--sq-dark)':'var(--sq-light)');
+        fc.textContent=FILES[boardC];
+        sq.appendChild(fc);
+      }
+      if(piece&&PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]){
+        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.style.cssText='width:90%;height:90%;object-fit:contain';
+        if(piece.color===liveChessGame.turn()&&piece.color===livePlayerColor&&!liveGameOver){
+          img.style.cursor='grab';img.style.touchAction='none';
+          img.addEventListener('pointerdown',(e)=>startPieceDrag(e,sqName,'live'));
+        } else {
+          img.style.pointerEvents='none';
+        }
+        sq.appendChild(img);
+      }
+      sq.onclick=()=>handleLiveSquareClick(sqName);
+      container.appendChild(sq);
+    }
+  }
+}
+
+function handleLiveSquareClick(sqName){
+  if(suppressNextClick){suppressNextClick=false;return;}
+  if(!liveChessGame||liveGameOver) return;
+  if(liveChessGame.turn()!==livePlayerColor) return;
+  const board = liveChessGame.board();
+  const {row,col} = {row:8-parseInt(sqName[1]),col:FILES.indexOf(sqName[0])};
+  const piece = board[row][col];
+  if(liveSelectedSquare&&livePossibleMoves.includes(sqName)){
+    makeLivePlayerMove(liveSelectedSquare, sqName);
+    return;
+  }
+  if(piece&&piece.color===livePlayerColor){
+    liveSelectedSquare=sqName;
+    livePossibleMoves=liveChessGame.moves({square:sqName,verbose:true}).map(m=>m.to);
+    drawLiveBoard();return;
+  }
+  liveSelectedSquare=null;livePossibleMoves=[];drawLiveBoard();
+}
+
+function makeLivePlayerMove(from,to){
+  if(isPromotionMove(liveChessGame, from, to)){
+    const piece = liveChessGame.get(from);
+    showPromotionPicker(piece.color, (promo)=>finalizeLiveMove(from,to,promo));
+    return;
+  }
+  finalizeLiveMove(from,to,'q');
+}
+
+async function finalizeLiveMove(from,to,promo){
+  const moverColor = liveChessGame.turn();
+  const mv = liveChessGame.move({from,to,promotion:promo});
+  if(!mv) return;
+  playMoveSound(!!mv.captured);
+  liveLastMove = {from,to};
+  liveSelectedSquare=null; livePossibleMoves=[];
+  drawLiveBoard();
+
+  const tc = TIME_CONTROLS.find(t=>t.id===liveGameRow.time_control) || TIME_CONTROLS[0];
+  const uci = from+to+(mv.promotion?mv.promotion:'');
+  const newMoves = (liveGameRow.moves ? liveGameRow.moves+' ' : '') + uci;
+
+  const payload = { fen: liveChessGame.fen(), moves: newMoves, last_move_at: new Date().toISOString() };
+
+  if(tc.base!=null){
+    const elapsed = (Date.now() - new Date(liveGameRow.last_move_at).getTime())/1000;
+    const bankField = moverColor==='w' ? 'white_time_left' : 'black_time_left';
+    const currentBank = moverColor==='w' ? liveGameRow.white_time_left : liveGameRow.black_time_left;
+    payload[bankField] = Math.max(0, currentBank - elapsed + tc.inc);
+  }
+
+  if(liveChessGame.in_checkmate()){
+    const winner = moverColor==='w' ? 'white' : 'black';
+    payload.status='finished'; payload.result=winner; payload.result_reason='checkmate';
+  } else if(liveChessGame.in_stalemate()){
+    payload.status='finished'; payload.result='draw'; payload.result_reason='stalemate';
+  } else if(liveChessGame.in_draw()){
+    payload.status='finished'; payload.result='draw'; payload.result_reason='draw';
+  }
+
+  liveGameRow = { ...liveGameRow, ...payload };
+  if(payload.status==='finished'){ liveGameOver=true; showLiveGameEndPanel(liveGameRow); }
+  await dbUpdate('live_games', liveGameId, payload);
+}
+
+function updateLiveMaterial(){
+  const oppEl = document.getElementById('live-material-opponent');
+  const playerEl = document.getElementById('live-material-player');
+  if(!oppEl||!playerEl||!liveChessGame) return;
+  const info = getMaterialInfo(liveChessGame);
+  const oppColor = livePlayerColor==='w'?'b':'w';
+  function icons(colorCaptured){
+    const cap = info.captured[colorCaptured]||{};
+    let html='';
+    ['q','r','b','n','p'].forEach(t=>{ const n=cap[t]||0; for(let i=0;i<n;i++) html+=`<span style="font-size:0.95rem">${MATERIAL_UNICODE[t][colorCaptured]}</span>`; });
+    return html;
+  }
+  const playerCapturedIcons = icons(oppColor);
+  const oppCapturedIcons = icons(livePlayerColor);
+  const diff = livePlayerColor==='w' ? info.diff : -info.diff;
+  playerEl.innerHTML = playerCapturedIcons + (diff>0 ? ` <span style="color:var(--gold);font-weight:700">+${diff}</span>` : '');
+  oppEl.innerHTML = oppCapturedIcons + (diff<0 ? ` <span style="color:var(--gold);font-weight:700">+${-diff}</span>` : '');
+}
+
+function updateLiveStatusBar(){
+  const bar = document.getElementById('live-status-bar');
+  if(!bar||!liveChessGame) return;
+  if(liveGameOver) return; // el panel de fin de partida ya lo cubre
+  if(liveOpponentDisconnected){
+    bar.innerHTML = '⚠️ El rival se desconectó. Si no vuelve en 30s, ganás la partida.';
+    bar.style.color = '#e08080';
+    return;
+  }
+  bar.style.color = 'var(--muted)';
+  if(liveChessGame.in_check()) bar.innerHTML = '⚠️ ¡Jaque!';
+  else bar.textContent = liveChessGame.turn()===livePlayerColor ? 'Tu turno' : 'Turno del rival';
+}
+
+function tickLiveClockDisplay(){
+  if(!liveGameRow || liveGameOver || !liveChessGame) return;
+  const tc = TIME_CONTROLS.find(t=>t.id===liveGameRow.time_control) || TIME_CONTROLS[0];
+  if(tc.base==null) return;
+  const elapsed = (Date.now() - new Date(liveGameRow.last_move_at).getTime())/1000;
+  const turnColor = liveChessGame.turn();
+  let whiteVal = liveGameRow.white_time_left, blackVal = liveGameRow.black_time_left;
+  if(turnColor==='w') whiteVal = Math.max(0, whiteVal - elapsed);
+  else blackVal = Math.max(0, blackVal - elapsed);
+  updateLiveClockDisplay(whiteVal, blackVal, turnColor);
+  if((turnColor==='w'&&whiteVal<=0)||(turnColor==='b'&&blackVal<=0)){
+    declareLiveTimeout(turnColor);
+  }
+}
+
+function updateLiveClockDisplay(whiteVal, blackVal, turnColor){
+  const playerEl = document.getElementById('live-clock-player-time');
+  const oppEl = document.getElementById('live-clock-opponent-time');
+  const playerBox = document.getElementById('live-clock-player');
+  const oppBox = document.getElementById('live-clock-opponent');
+  if(!playerEl||!oppEl) return;
+  const playerTime = livePlayerColor==='w' ? whiteVal : blackVal;
+  const oppTime = livePlayerColor==='w' ? blackVal : whiteVal;
+  playerEl.textContent = formatClockTime(playerTime);
+  oppEl.textContent = formatClockTime(oppTime);
+  playerEl.style.color = (playerTime<=10) ? '#e08080' : 'var(--cream)';
+  oppEl.style.color = (oppTime<=10) ? '#e08080' : 'var(--cream)';
+  const playerActive = turnColor===livePlayerColor;
+  if(playerBox){ playerBox.style.borderColor = playerActive ? 'var(--gold)' : 'var(--border)'; playerBox.style.background = playerActive ? 'rgba(201,168,76,0.12)' : 'var(--surface2)'; }
+  if(oppBox){ oppBox.style.borderColor = !playerActive ? 'var(--gold)' : 'var(--border)'; oppBox.style.background = !playerActive ? 'rgba(201,168,76,0.12)' : 'var(--surface2)'; }
+}
+
+function declareLiveTimeout(loserColor){
+  if(liveGameOver || !liveGameId) return;
+  liveGameOver = true;
+  const winner = loserColor==='w' ? 'black' : 'white';
+  dbUpdate('live_games', liveGameId, { status:'finished', result:winner, result_reason:'timeout' });
+}
+
+function resignLiveGame(){
+  if(liveGameOver || !liveGameId) return;
+  if(!confirm('¿Seguro que querés rendirte?')) return;
+  liveGameOver = true;
+  const winner = livePlayerColor==='w' ? 'black' : 'white';
+  dbUpdate('live_games', liveGameId, { status:'finished', result:winner, result_reason:'resignation' });
+}
+
+function showLiveGameEndPanel(row){
+  liveGameOver = true;
+  if(liveClockInterval){ clearInterval(liveClockInterval); liveClockInterval=null; }
+  if(liveDisconnectTimer){ clearTimeout(liveDisconnectTimer); liveDisconnectTimer=null; }
+  document.getElementById('live-resign-btn').style.display = 'none';
+  document.getElementById('live-back-btn').style.display = 'block';
+
+  const panel = document.getElementById('live-mate-side-panel');
+  const title = document.getElementById('live-mate-title');
+  const sub = document.getElementById('live-mate-side-sub');
+  const isDraw = row.result === 'draw';
+  const myWon = !isDraw && ((row.result==='white' && livePlayerColor==='w') || (row.result==='black' && livePlayerColor==='b'));
+
+  panel.classList.remove('win','lose');
+  if(isDraw){
+    panel.classList.add('lose');
+    panel.style.filter = 'grayscale(0.6)';
+    title.textContent = '🤝 Tablas';
+  } else {
+    panel.style.filter = '';
+    panel.classList.add(myWon ? 'win' : 'lose');
+    title.textContent = myWon ? '🏆 ¡Ganaste!' : '💀 Perdiste';
+  }
+  sub.textContent = LIVE_RESULT_LABELS[row.result_reason] || '';
+  panel.classList.add('show');
+}
+
+function leaveLiveGame(){
+  if(liveGameChannel){ sbClient.removeChannel(liveGameChannel); liveGameChannel=null; }
+  if(livePresenceChannel){ sbClient.removeChannel(livePresenceChannel); livePresenceChannel=null; }
+  if(liveClockInterval){ clearInterval(liveClockInterval); liveClockInterval=null; }
+  if(liveDisconnectTimer){ clearTimeout(liveDisconnectTimer); liveDisconnectTimer=null; }
+  liveGameId = null; liveGameRow = null; liveChessGame = null; liveGameOver = false;
+  liveOpponentDisconnected = false;
+  document.getElementById('live-game-area').style.display = 'none';
+  document.getElementById('live-lobby-container').style.display = 'block';
+  renderLiveLobby();
 }
 
 function renderPlayBot(){
