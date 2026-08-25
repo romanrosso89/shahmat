@@ -3431,19 +3431,41 @@ function renderLiveLobby(){
 
 // ── Flujo de desafío: elegir tiempo → enviar → esperar respuesta ──
 let challengeTargetId = null, challengeTargetName = null, challengeTcId = 'none';
+let challengeColor = 'random';
 let outgoingChallengeId = null, outgoingTimeout = null;
-let incomingChallenge = null; // { challengeId, fromId, fromName, tcId }
+let incomingChallenge = null; // { challengeId, fromId, fromName, tcId, color }
+
+const CHALLENGE_COLOR_OPTIONS = [
+  { id:'w', label:'♙ Blancas' },
+  { id:'random', label:'🎲 Al azar' },
+  { id:'b', label:'♟ Negras' },
+];
 
 function openChallengePicker(targetId, targetName){
   challengeTargetId = targetId;
   challengeTargetName = targetName;
   challengeTcId = 'none';
+  challengeColor = 'random';
   document.getElementById('challenge-target-name').textContent = targetName;
+  const colorPicker = document.getElementById('challenge-color-picker');
+  colorPicker.innerHTML = CHALLENGE_COLOR_OPTIONS.map(opt=>`
+    <div onclick="selectChallengeColor('${opt.id}')" id="challenge-color-btn-${opt.id}"
+      style="background:var(--surface2);border:1.5px solid ${opt.id==='random'?'var(--gold)':'var(--border)'};border-radius:6px;padding:0.5rem 0.3rem;text-align:center;cursor:pointer;font-size:0.78rem;font-weight:600;color:${opt.id==='random'?'var(--gold)':'var(--cream)'}">${opt.label}</div>`).join('');
   const picker = document.getElementById('challenge-tc-picker');
   picker.innerHTML = TIME_CONTROLS.map(tc=>`
     <div onclick="selectChallengeTc('${tc.id}')" id="challenge-tc-btn-${tc.id}"
       style="background:var(--surface2);border:1.5px solid ${tc.id==='none'?'var(--gold)':'var(--border)'};border-radius:6px;padding:0.5rem 0.3rem;text-align:center;cursor:pointer;font-size:0.78rem;font-weight:600;color:${tc.id==='none'?'var(--gold)':'var(--cream)'}">${tc.label}</div>`).join('');
   document.getElementById('challenge-picker-modal').style.display = 'flex';
+}
+function selectChallengeColor(id){
+  challengeColor = id;
+  CHALLENGE_COLOR_OPTIONS.forEach(opt=>{
+    const el = document.getElementById('challenge-color-btn-'+opt.id);
+    if(el){
+      el.style.borderColor = opt.id===id ? 'var(--gold)' : 'var(--border)';
+      el.style.color = opt.id===id ? 'var(--gold)' : 'var(--cream)';
+    }
+  });
 }
 function selectChallengeTc(id){
   challengeTcId = id;
@@ -3464,7 +3486,7 @@ function confirmSendChallenge(){
   outgoingChallengeId = 'ch_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
   liveLobbyChannel.send({
     type: 'broadcast', event: 'challenge',
-    payload: { challengeId: outgoingChallengeId, toId: challengeTargetId, fromId: String(currentUser.id), fromName: currentUser.name, tcId: challengeTcId }
+    payload: { challengeId: outgoingChallengeId, toId: challengeTargetId, fromId: String(currentUser.id), fromName: currentUser.name, tcId: challengeTcId, color: challengeColor }
   });
   closeChallengePicker();
   document.getElementById('outgoing-target-name').textContent = challengeTargetName;
@@ -3494,6 +3516,11 @@ function handleIncomingChallenge(payload){
   const tc = TIME_CONTROLS.find(t=>t.id===payload.tcId) || TIME_CONTROLS[0];
   document.getElementById('incoming-from-name').textContent = payload.fromName;
   document.getElementById('incoming-tc-label').textContent = `Ritmo de juego: ${tc.label}`;
+  // El color que eligió el que desafía es SU color; a mí me toca el contrario.
+  const miColorTxt = payload.color==='w' ? 'Vos jugás con negras'
+    : payload.color==='b' ? 'Vos jugás con blancas'
+    : 'El color se sortea al azar';
+  document.getElementById('incoming-color-label').textContent = miColorTxt;
   document.getElementById('incoming-challenge-modal').style.display = 'flex';
 }
 
@@ -3520,8 +3547,12 @@ async function respondChallenge(accepted){
   }
 
   // El que acepta es quien crea la partida en la base de datos.
+  // ch.color es el color que eligió QUIEN DESAFÍA (el rival, ch.fromId); el que acepta (currentUser) juega el contrario.
   const tc = TIME_CONTROLS.find(t=>t.id===ch.tcId) || TIME_CONTROLS[0];
-  const iAmWhite = Math.random() < 0.5;
+  let iAmWhite;
+  if(ch.color==='w') iAmWhite = false;       // el rival eligió blancas → yo juego negras
+  else if(ch.color==='b') iAmWhite = true;   // el rival eligió negras → yo juego blancas
+  else iAmWhite = Math.random() < 0.5;       // al azar
   const whiteId = iAmWhite ? String(currentUser.id) : String(ch.fromId);
   const whiteName = iAmWhite ? currentUser.name : ch.fromName;
   const blackId = iAmWhite ? String(ch.fromId) : String(currentUser.id);
@@ -3771,7 +3802,7 @@ async function finalizeLiveMove(from,to,promo){
     const elapsed = (Date.now() - new Date(liveGameRow.last_move_at).getTime())/1000;
     const bankField = moverColor==='w' ? 'white_time_left' : 'black_time_left';
     const currentBank = moverColor==='w' ? liveGameRow.white_time_left : liveGameRow.black_time_left;
-    payload[bankField] = Math.max(0, currentBank - elapsed + tc.inc);
+    payload[bankField] = Math.round(Math.max(0, currentBank - elapsed + tc.inc));
   }
 
   if(liveChessGame.in_checkmate()){
@@ -3785,7 +3816,12 @@ async function finalizeLiveMove(from,to,promo){
 
   liveGameRow = { ...liveGameRow, ...payload };
   if(payload.status==='finished'){ liveGameOver=true; showLiveGameEndPanel(liveGameRow); }
-  await dbUpdate('live_games', liveGameId, payload);
+  const result = await dbUpdate('live_games', liveGameId, payload);
+  if(!result || result.__error){
+    console.error('No se pudo guardar la jugada en la partida en vivo:', result, payload);
+    document.getElementById('live-status-bar').innerHTML = '⚠️ No se pudo guardar la jugada. Revisá tu conexión.';
+    document.getElementById('live-status-bar').style.color = '#e08080';
+  }
 }
 
 function updateLiveMaterial(){
@@ -4697,7 +4733,9 @@ function formatDuration(totalSeconds){
 <div id="challenge-picker-modal" class="modal-overlay" style="display:none">
   <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.4rem;max-width:360px;width:100%">
     <h3 style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.05rem;margin:0 0 0.3rem">Desafiar a <span id="challenge-target-name"></span></h3>
-    <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:1rem 0 0.5rem">Elegí el tiempo de juego</div>
+    <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:1rem 0 0.5rem">Elegí tu color</div>
+    <div id="challenge-color-picker" style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:1rem"></div>
+    <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 0.5rem">Elegí el tiempo de juego</div>
     <div id="challenge-tc-picker" style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.4rem;margin-bottom:1.2rem"></div>
     <div style="display:flex;gap:0.5rem">
       <button class="btn" style="flex:1;background:var(--surface2)" onclick="closeChallengePicker()">Cancelar</button>
@@ -4719,7 +4757,8 @@ function formatDuration(totalSeconds){
   <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.6rem;max-width:340px;width:100%;text-align:center">
     <div style="font-size:2rem;margin-bottom:0.5rem">⚔️</div>
     <div style="font-size:0.95rem;color:var(--cream);margin-bottom:0.3rem"><b id="incoming-from-name" style="color:var(--gold)"></b> te desafió a jugar</div>
-    <div id="incoming-tc-label" style="font-size:0.78rem;color:var(--muted);margin-bottom:1.2rem"></div>
+    <div id="incoming-tc-label" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.3rem"></div>
+    <div id="incoming-color-label" style="font-size:0.78rem;color:var(--muted);margin-bottom:1.2rem"></div>
     <div style="display:flex;gap:0.5rem">
       <button class="btn" style="flex:1;background:var(--surface2)" onclick="respondChallenge(false)">Rechazar</button>
       <button class="btn btn-add" style="flex:1" onclick="respondChallenge(true)">Aceptar</button>
