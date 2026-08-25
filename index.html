@@ -3437,8 +3437,8 @@ let incomingChallenge = null; // { challengeId, fromId, fromName, tcId, color }
 
 const CHALLENGE_COLOR_OPTIONS = [
   { id:'w', label:'♙ Blancas' },
-  { id:'random', label:'🎲 Al azar' },
   { id:'b', label:'♟ Negras' },
+  { id:'random', label:'🎲 Al azar' },
 ];
 
 function openChallengePicker(targetId, targetName){
@@ -3613,6 +3613,7 @@ let liveGameChannel = null;
 let livePresenceChannel = null;
 let liveClockInterval = null;
 let liveDisconnectTimer = null;
+let liveDisconnectStartedAt = 0;
 let liveOpponentDisconnected = false;
 let liveGameEnteredAt = 0;
 let liveGameOver = false;
@@ -3674,6 +3675,7 @@ async function enterLiveGame(gameId){
       liveOpponentDisconnected = false;
     } else if(!liveGameOver && !liveDisconnectTimer){
       liveOpponentDisconnected = true;
+      liveDisconnectStartedAt = Date.now();
       liveDisconnectTimer = setTimeout(()=>{
         if(!liveGameOver){
           dbUpdate('live_games', liveGameId, { status:'finished', result: livePlayerColor==='w'?'white':'black', result_reason:'disconnect' });
@@ -3848,7 +3850,8 @@ function updateLiveStatusBar(){
   if(!bar||!liveChessGame) return;
   if(liveGameOver) return; // el panel de fin de partida ya lo cubre
   if(liveOpponentDisconnected){
-    bar.innerHTML = '⚠️ El rival se desconectó. Si no vuelve en 30s, ganás la partida.';
+    const segundosRestantes = Math.max(0, 30 - Math.floor((Date.now()-liveDisconnectStartedAt)/1000));
+    bar.innerHTML = `⚠️ El rival se desconectó. Si no vuelve en <b>${segundosRestantes}s</b>, ganás la partida.`;
     bar.style.color = '#e08080';
     return;
   }
@@ -3859,6 +3862,7 @@ function updateLiveStatusBar(){
 
 function tickLiveClockDisplay(){
   if(!liveGameRow || liveGameOver || !liveChessGame) return;
+  if(liveOpponentDisconnected) updateLiveStatusBar(); // mantiene la cuenta regresiva de 30s actualizada
   const tc = TIME_CONTROLS.find(t=>t.id===liveGameRow.time_control) || TIME_CONTROLS[0];
   if(tc.base==null) return;
   const elapsed = (Date.now() - new Date(liveGameRow.last_move_at).getTime())/1000;
