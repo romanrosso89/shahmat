@@ -753,9 +753,6 @@
         <div class="form-row"><label>Solución (primera jugada)</label><input type="text" id="ex-sol-input" placeholder="Ej: e2e4 (casilla origen + destino)"><div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Escribí la casilla de origen y destino de la primera jugada. Ej: d1h5 mueve la dama de d1 a h5</div></div>
         
         <div class="form-row"><label>Categoría</label><select id="ex-category-input">
-          <optgroup label="Especial">
-            <option>Lo que estamos trabajando en clase</option>
-          </optgroup>
           <optgroup label="Mates">
             <option>Mate en 1</option>
             <option>Mate en 2</option>
@@ -925,6 +922,22 @@ async function dbUpdate(table, id, data) {
 }
 async function dbDelete(table, id) { await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'DELETE',headers:H}); }
 
+// ── Contraseñas: encriptado con clave única (salt) por usuario ──
+// Cada usuario tiene una "salt" (texto al azar) propia. La contraseña nunca se
+// guarda tal cual: se guarda el resultado de mezclarla con su salt y encriptar
+// eso con SHA-256. Así, aunque alguien vea la tabla de usuarios en Supabase,
+// no puede leer la contraseña real de nadie.
+function randomSalt(){
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function hashPassword(password, salt){
+  const enc = new TextEncoder().encode(salt + ':' + password);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
 async function openExercise(ex){
   history.pushState({page:'exercise',exId:ex.id,category:_currentCategory,level:_currentLevel},'');
   currentExercise=ex;solutionVisible=false;
@@ -973,11 +986,30 @@ async function doLogin() {
   const email = document.getElementById('login-email').value.trim();
   const pass  = document.getElementById('login-pass').value;
   if (!email||!pass) { showErr('login-error','Completá todos los campos.'); return; }
-  const users = await dbGet('users', `email=eq.${encodeURIComponent(email)}&password=eq.${encodeURIComponent(pass)}`);
-  if (!users.length) { showErr('login-error','Email o contraseña incorrectos.'); return; }
-  if (users[0].blocked) { showErr('login-error','Tu cuenta ha sido bloqueada. Consultá con tu profesor.'); return; }
-  if (users[0].role==='student' && users[0].approved===false) { showErr('login-error','Tu cuenta todavía no fue confirmada por el profe. Esperá su aprobación.'); return; }
-  currentUser = users[0];
+  const users = await dbGet('users', `email=eq.${encodeURIComponent(email)}`);
+  if (!users || !users.length) { showErr('login-error','Email o contraseña incorrectos.'); return; }
+  const user = users[0];
+
+  let passwordOk = false;
+  if(user.password_hash && user.password_salt){
+    // Camino normal: la cuenta ya tiene contraseña encriptada.
+    const hash = await hashPassword(pass, user.password_salt);
+    passwordOk = (hash === user.password_hash);
+  } else if(user.password){
+    // Cuenta vieja (de antes de este cambio): todavía tiene la contraseña sin encriptar.
+    // Si coincide, la migramos automáticamente en este mismo momento.
+    passwordOk = (user.password === pass);
+    if(passwordOk){
+      const salt = randomSalt();
+      const hash = await hashPassword(pass, salt);
+      await dbUpdate('users', user.id, { password_hash: hash, password_salt: salt, password: null });
+    }
+  }
+  if(!passwordOk){ showErr('login-error','Email o contraseña incorrectos.'); return; }
+
+  if (user.blocked) { showErr('login-error','Tu cuenta ha sido bloqueada. Consultá con tu profesor.'); return; }
+  if (user.role==='student' && user.approved===false) { showErr('login-error','Tu cuenta todavía no fue confirmada por el profe. Esperá su aprobación.'); return; }
+  currentUser = user;
   hideErr('login-error');
   startSessionTracking();
   if (currentUser.role==='admin') { showScreen('screen-admin'); renderUsers(); }
@@ -993,7 +1025,9 @@ async function doRegister() {
     if(ex[0].blocked){ showErr('reg-error','Este email no puede registrarse. Consultá con tu profesor.'); return; }
     showErr('reg-error','Ya existe una cuenta con ese email.'); return;
   }
-  const res = await dbInsert('users',{name,email,password:pass,role:'student',plan:'free',approved:false});
+  const salt = randomSalt();
+  const hash = await hashPassword(pass, salt);
+  const res = await dbInsert('users',{name,email,password_hash:hash,password_salt:salt,role:'student',plan:'free',approved:false});
   if (!res || res.__error || !Array.isArray(res) || res.length===0){
     console.error('Registro fallido:', res);
     showErr('reg-error','No se pudo crear la cuenta. Probá de nuevo en un momento, o avisale al profesor.');
@@ -1260,14 +1294,13 @@ function renderFolders() {
   const MATE_CATS = ['Mate en 1','Mate en 2','Mate en 3','Mate en 4'];
 
   const TOP_CATEGORIES = [
-    { name:'Lo que estamos trabajando en clase', icon:'📌', cls:'cat-enclase' },
     { name:'Jaque Mate', icon:'♚', cls:'cat-jakemate', special:'jakemate' },
     { name:'Finales que todos deben conocer', icon:'🎓', cls:'cat-finales', special:'finales' },
   ];
 
   // Agregar categorías extra que no sean de mate ni finales
   const extraCats = [...new Set(allExercises.map(e=>e.category||'General'))]
-    .filter(c => !MATE_CATS.includes(c) && c !== 'Finales que todos deben conocer' && c !== 'Lo que estamos trabajando en clase' &&
+    .filter(c => !MATE_CATS.includes(c) && c !== 'Finales que todos deben conocer' &&
       !['Mate con 2 torres','Mate con dama','Mate con 1 torre','Mate con 2 alfiles','Mate con alfil y caballo'].includes(c));
   extraCats.forEach(c=>TOP_CATEGORIES.push({name:c,icon:'♟',cls:'cat-default'}));
 
@@ -2591,7 +2624,9 @@ async function updateUserPassword(){
   if(!pass||pass.length<4){status.textContent='La contraseña debe tener al menos 4 caracteres.';status.style.color='var(--danger)';status.style.display='block';return;}
   if(pass!==confirm){status.textContent='Las contraseñas no coinciden.';status.style.color='var(--danger)';status.style.display='block';return;}
   try{
-    await dbUpdate('users',currentUser.id,{password:pass});
+    const salt = randomSalt();
+    const hash = await hashPassword(pass, salt);
+    await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
     document.getElementById('new-pass-input').value='';
     document.getElementById('new-pass-confirm').value='';
     status.textContent='✓ Contraseña actualizada correctamente.';
@@ -4780,9 +4815,6 @@ function formatDuration(totalSeconds){
     <div class="form-row"><label>Video (opcional)</label><input type="text" id="edit-video"></div>
     <div class="form-row"><label>Categoría</label>
       <select id="edit-category">
-        <optgroup label="Especial">
-          <option>Lo que estamos trabajando en clase</option>
-        </optgroup>
         <optgroup label="Mates">
           <option>Mate en 1</option>
           <option>Mate en 2</option>
