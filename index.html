@@ -1099,7 +1099,7 @@ window.addEventListener('popstate', function(e){
     _renderExerciseListNoHistory(state.category, state.level);
   } else if(state.page==='exercise-list'){
     showScreen('screen-student');
-    _renderLevelsNoHistory(state.category);
+    _renderFoldersNoHistory();
   } else if(state.page==='mate-folder'){
     showScreen('screen-student');
     _blockPushState=true; renderMateFolder(); _blockPushState=false;
@@ -1337,7 +1337,10 @@ function renderFolders() {
   const MATE_CATS = ['Mate en 1','Mate en 2','Mate en 3','Mate en 4'];
 
   const TOP_CATEGORIES = [
-    { name:'Jaque Mate', icon:'♚', cls:'cat-jakemate', special:'jakemate' },
+    { name:'Mate en 1', icon:'♟', cls:'cat-mate1' },
+    { name:'Mate en 2', icon:'♞', cls:'cat-mate2' },
+    { name:'Mate en 3', icon:'♜', cls:'cat-mate3' },
+    { name:'Mate en 4', icon:'♛', cls:'cat-mate4' },
     { name:'Finales que todos deben conocer', icon:'🎓', cls:'cat-finales', special:'finales' },
   ];
 
@@ -1349,9 +1352,7 @@ function renderFolders() {
 
   TOP_CATEGORIES.forEach((catObj)=>{
     let exCount = 0;
-    if(catObj.special === 'jakemate'){
-      exCount = allExercises.filter(e=>MATE_CATS.includes(e.category||'')).length;
-    } else if(catObj.special === 'finales'){
+    if(catObj.special === 'finales'){
       exCount = 0;
     } else {
       exCount = allExercises.filter(e=>(e.category||'General')===catObj.name).length;
@@ -1365,9 +1366,8 @@ function renderFolders() {
         <div class="folder-count">${exCount > 0 ? exCount+' ejercicio'+(exCount!==1?'s':'') : 'Ver contenido'}</div>
       </div>
       <span class="folder-arrow">›</span>`;
-    if(catObj.special === 'jakemate') card.onclick = ()=> renderMateFolder();
-    else if(catObj.special === 'finales') card.onclick = ()=> renderFinales();
-    else card.onclick = ()=> renderLevels(catObj.name);
+    if(catObj.special === 'finales') card.onclick = ()=> renderFinales();
+    else card.onclick = ()=> renderExerciseList(catObj.name, null);
     list.appendChild(card);
   });
   setTimeout(animateCards,50);
@@ -1462,7 +1462,7 @@ async function renderExerciseList(category,level){
   const list=document.getElementById('exercise-list');
   // Limpiar elementos anteriores
   let prevEl = list.previousElementSibling;
-  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar')){
+  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar' || prevEl.dataset?.type==='level-filter')){
     const toRemove = prevEl;
     prevEl = prevEl.previousElementSibling;
     toRemove.remove();
@@ -1472,8 +1472,24 @@ async function renderExerciseList(category,level){
 
   const newBc=document.createElement('div');
   newBc.className='breadcrumb';
-  newBc.innerHTML=`<span onclick="renderFolders()">Ejercicios</span><span class="sep">›</span><span onclick="renderLevels('${category}')" style="cursor:pointer;color:#e08080">${category}</span><span class="sep">›</span><span style="color:var(--cream)">${level||'Todos'}</span>`;
+  newBc.innerHTML=`<span onclick="renderFolders()">Ejercicios</span><span class="sep">›</span><span style="color:var(--cream)">${category}</span>`;
   list.before(newBc);
+
+  // Filtro de nivel (reemplaza la vieja carpeta de "Nivel" por pestañas, para no tener que navegar)
+  const LEVEL_FILTERS = [
+    {key:null, label:'Todos'},
+    {key:'Principiante', label:'🟢 Principiante'},
+    {key:'Intermedio', label:'🟡 Intermedio'},
+    {key:'Avanzado', label:'🔴 Avanzado'},
+  ];
+  const filterBar=document.createElement('div');
+  filterBar.dataset.type='level-filter';
+  filterBar.style.cssText='display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.8rem';
+  filterBar.innerHTML = LEVEL_FILTERS.map(f=>{
+    const active = (f.key||null) === (level||null);
+    return `<span onclick="renderExerciseList('${category}', ${f.key?`'${f.key}'`:'null'})" style="cursor:pointer;padding:0.35rem 0.7rem;border-radius:20px;font-size:0.78rem;font-weight:600;border:1.5px solid ${active?'var(--gold)':'var(--border)'};color:${active?'var(--gold)':'var(--muted)'};background:${active?'rgba(201,168,76,0.12)':'var(--surface2)'}">${f.label}</span>`;
+  }).join('');
+  newBc.after(filterBar);
 
   let exs=allExercises.filter(e=>(e.category||'General')===category);
   if(level) exs=exs.filter(e=>(e.level||'Intermedio')===level);
