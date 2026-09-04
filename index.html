@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shah Mat</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#c9a84c">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root { --bg:#000000;--surface:#0a0a0a;--surface2:#111111;--border:#222222;--gold:#c9a84c;--gold-light:#e8c96a;--cream:#f0ead8;--text:#e8e0d0;--muted:#7a7060;--danger:#a05050;--sq-light:#f0d9b5;--sq-dark:#b58863; }
@@ -201,6 +204,8 @@
   .home-card.card-bot .home-card-stat{color:#7ab8ff}
   .home-card.card-live{background:linear-gradient(135deg,#0e2e2a,#0a1c1a);border-color:#3ac8b0}
   .home-card.card-live .home-card-stat{color:#5ae8cc}
+  .home-card.card-coord{background:linear-gradient(135deg,#2e1a0e,#1c130a);border-color:#c88a3a}
+  .home-card.card-coord .home-card-stat{color:#e8b25a}
   .empty-state .icon{font-size:2.5rem;margin-bottom:0.8rem}
   .loading{text-align:center;padding:2rem;color:var(--muted);font-size:0.9rem}
   .spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:0.5rem;vertical-align:middle}
@@ -443,6 +448,12 @@
         <div class="home-card-desc">Desafiá a otros alumnos conectados ahora mismo</div>
         <div class="home-card-stat" id="home-live-stat">Tocá para ver quién está conectado</div>
       </div>
+      <div class="home-card card-coord" onclick="showStudentSection('coordinates')">
+        <div class="home-card-icon">🎯</div>
+        <div class="home-card-title">Coordenadas</div>
+        <div class="home-card-desc">Entrená la visión del tablero contrarreloj</div>
+        <div class="home-card-stat" id="home-coord-stat">Mejor puntaje: —</div>
+      </div>
       <div class="home-card card-progreso" onclick="showStudentSection('progress')">
         <div class="home-card-icon">📊</div>
         <div class="home-card-title">Mi progreso</div>
@@ -590,10 +601,15 @@
           </div>
         </div>
         <div id="live-game-buttons" style="display:flex;gap:0.5rem">
+          <button onclick="offerDraw()" id="live-draw-btn" style="flex:1;padding:0.6rem;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;cursor:pointer">🤝 Ofrecer tablas</button>
           <button onclick="resignLiveGame()" id="live-resign-btn" style="flex:1;padding:0.6rem;background:var(--surface2);color:#e08080;border:1px solid rgba(224,128,128,0.4);border-radius:6px;font-size:0.85rem;cursor:pointer">🏳 Rendirse</button>
         </div>
         <button onclick="leaveLiveGame()" id="live-back-btn" style="display:none;width:100%;margin-top:0.5rem;padding:0.6rem;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;cursor:pointer">↺ Volver a la sala</button>
       </div>
+    </div>
+    <div id="tab-coordinates" class="content" style="display:none">
+      <p class="section-title">Coordenadas contrarreloj</p>
+      <div id="coord-container"></div>
     </div>
     <div id="tab-racha" class="content" style="display:none">
       <p class="section-title">Mi racha</p>
@@ -917,6 +933,7 @@ function choosePieceSet(key){
 renderCustomizationPickers();
 
 let currentUser = null, currentExercise = null, solutionVisible = false;
+let _currentProgressUserId = null, _currentProgressUserName = null;
 let _currentCategory = null, _currentLevel = null;
 
 async function dbGet(table, q='') { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}?${q}`, {headers:H})).json(); }
@@ -1006,7 +1023,7 @@ async function doLogin() {
   if (!identifier||!pass) { showErr('login-error','Completá todos los campos.'); return; }
   let users = await dbGet('users', `email=eq.${encodeURIComponent(identifier)}`);
   if(!users || !users.length){
-    users = await dbGet('users', `name=eq.${encodeURIComponent(identifier)}`);
+    users = await dbGet('users', `name=ilike.${encodeURIComponent(identifier)}`);
   }
   if (!users || !users.length) { showErr('login-error','Usuario o contraseña incorrectos.'); return; }
   const user = users[0];
@@ -1054,15 +1071,15 @@ async function doRegister() {
 
   // Si ya existe alguien con exactamente ese nombre, se agrega un numerito para diferenciar
   let finalName = name;
-  const existing = await dbGet('users', `name=eq.${encodeURIComponent(name)}`);
+  const existing = await dbGet('users', `name=ilike.${encodeURIComponent(name)}`);
   if(existing && existing.length){
     let n = 2;
     let candidate = `${name} (${n})`;
-    let clash = await dbGet('users', `name=eq.${encodeURIComponent(candidate)}`);
+    let clash = await dbGet('users', `name=ilike.${encodeURIComponent(candidate)}`);
     while(clash && clash.length){
       n++;
       candidate = `${name} (${n})`;
-      clash = await dbGet('users', `name=eq.${encodeURIComponent(candidate)}`);
+      clash = await dbGet('users', `name=ilike.${encodeURIComponent(candidate)}`);
     }
     finalName = candidate;
   }
@@ -1165,12 +1182,14 @@ function backToHome(){
   history.pushState({page:'home'},'');
   if(_countdownInterval){ clearInterval(_countdownInterval); _countdownInterval=null; }
   leaveLiveLobby();
+  stopCoordRound();
   document.getElementById('student-home').style.display='block';
   document.getElementById('student-section').style.display='none';
 }
 
 function showStudentSection(section){
   if(section!=='play-live') leaveLiveLobby();
+  if(section!=='coordinates') stopCoordRound();
   history.pushState({page:'student-section',section},'');
   document.getElementById('student-home').style.display='none';
   const sec = document.getElementById('student-section');
@@ -1184,6 +1203,7 @@ function showStudentSection(section){
   document.getElementById('tab-racha').style.display='none';
   document.getElementById('tab-play-bot').style.display='none';
   document.getElementById('tab-play-live').style.display='none';
+  document.getElementById('tab-coordinates').style.display='none';
   document.getElementById('tab-achievements').style.display='none';
 
   if(section==='exercises'){
@@ -1224,6 +1244,10 @@ function showStudentSection(section){
     document.getElementById('section-title-label').textContent='Jugar en vivo';
     document.getElementById('tab-play-live').style.cssText='display:flex;flex-direction:column';
     openLiveLobby();
+  } else if(section==='coordinates'){
+    document.getElementById('section-title-label').textContent='Coordenadas';
+    document.getElementById('tab-coordinates').style.cssText='display:flex;flex-direction:column';
+    renderCoordinatesIntro();
   } else if(section==='racha'){
     document.getElementById('section-title-label').textContent='Mi racha';
     document.getElementById('tab-racha').style.cssText='display:flex;flex-direction:column';
@@ -1298,6 +1322,9 @@ async function renderStudentView() {
   if(badgeEl){badgeEl.textContent=u.plan==='premium'?'PRO':'Básico';badgeEl.className='badge '+u.plan;}
   const greetEl=document.getElementById('home-greeting');
   if(greetEl) greetEl.childNodes[0].textContent='Hola, '+u.name.split(' ')[0]+' ';
+
+  const homeCoordStat = document.getElementById('home-coord-stat');
+  if(homeCoordStat) homeCoordStat.textContent = `Mejor puntaje: ${u.coord_best_score || '—'}`;
 
   // Cargar racha y mostrar badge
   try {
@@ -2824,7 +2851,10 @@ async function renderUsers(){
       row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.5rem 0;border-top:1px solid rgba(255,255,255,0.06)';
       row.innerHTML = `
         <div style="flex:1;min-width:0">
-          <div style="font-size:0.85rem;font-weight:500">${u.name}</div>
+          <div style="font-size:0.85rem;font-weight:500;display:flex;align-items:center;gap:0.4rem">
+            ${u.name}
+            <button onclick='editUserName(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name)})' style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.75rem;padding:0" title="Editar nombre">✏️</button>
+          </div>
           <div style="font-size:0.72rem;color:var(--muted)">${u.email}</div>
         </div>
         <div style="display:flex;gap:0.4rem;flex-shrink:0">
@@ -2848,6 +2878,7 @@ async function renderUsers(){
       <div style="flex:1">
         <div style="font-size:0.9rem;font-weight:500;margin-bottom:0.2rem;display:flex;align-items:center;gap:0.5rem">
           ${u.name}
+          <button onclick='editUserName(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name)})' style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.75rem;padding:0" title="Editar nombre">✏️</button>
           <span class="badge ${u.plan==='premium'?'PRO':'Básico'}">${u.plan==='premium'?'PRO':'Básico'}</span>
         </div>
         <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">${u.email} · ${solved}/${totalEx} ejercicios</div>
@@ -2855,6 +2886,7 @@ async function renderUsers(){
       </div>
       <div style="display:flex;flex-direction:column;gap:0.3rem;align-items:flex-end">
         <div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--gold)">${pct}%</div>
+        <button onclick="toggleHidden('${u.id}','${u.hidden}')" style="font-size:0.7rem;padding:0.2rem 0.5rem;border-radius:4px;border:1px solid ${u.hidden?'var(--gold)':'var(--muted)'};background:transparent;color:${u.hidden?'var(--gold)':'var(--muted)'};cursor:pointer" title="Las cuentas de prueba no aparecen para los alumnos ni suman en el ranking">${u.hidden?'🙈 De prueba':'👁 Ocultar'}</button>
         <button onclick="toggleBlock('${u.id}','${u.blocked}')" style="font-size:0.7rem;padding:0.2rem 0.5rem;border-radius:4px;border:1px solid ${u.blocked?'#7ab88a':'var(--danger)'};background:transparent;color:${u.blocked?'#7ab88a':'var(--danger)'};cursor:pointer">${u.blocked?'Desbloquear':'Bloquear'}</button>
       </div>`;
     listEl.appendChild(row);
@@ -2873,6 +2905,8 @@ async function rejectUser(userId){
 }
 
 async function viewStudentProgress(userId, userName){
+  _currentProgressUserId = userId;
+  _currentProgressUserName = userName;
   const modal = document.getElementById('student-progress-modal');
   const body = document.getElementById('student-progress-body');
   document.getElementById('student-progress-name').textContent = userName;
@@ -2983,9 +3017,109 @@ function closeStudentProgressModal(){
   document.getElementById('student-progress-modal').style.display = 'none';
 }
 
+const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+async function openMonthlyReport(){
+  const userId = _currentProgressUserId, userName = _currentProgressUserName;
+  if(!userId) return;
+  const modal = document.getElementById('monthly-report-modal');
+  const body = document.getElementById('monthly-report-body');
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>Generando...</div>';
+  modal.style.display = 'flex';
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthLabel = `${MESES_ES[now.getMonth()]} de ${now.getFullYear()}`;
+
+  const [prog, stats] = await Promise.all([
+    dbGet('progress', `user_id=eq.${userId}`),
+    computeCoronaStats(userId)
+  ]);
+
+  const progThisMonth = (prog||[]).filter(p => p.created_at && new Date(p.created_at) >= monthStart);
+  const exCatMap = {};
+  (allExercises||[]).forEach(ex => { exCatMap[ex.id] = ex.category || 'General'; });
+  const byCategory = {};
+  progThisMonth.forEach(p => {
+    const cat = exCatMap[p.exercise_id] || 'General';
+    byCategory[cat] = (byCategory[cat]||0) + 1;
+  });
+  const catLines = Object.keys(byCategory).sort((a,b)=>byCategory[b]-byCategory[a])
+    .map(cat => `   • ${cat}: ${byCategory[cat]}`).join('\n');
+
+  const totalMes = progThisMonth.length;
+
+  const texto = `📄 Reporte de ${userName} — ${monthLabel}
+♞ Academia Shah Mat
+
+✅ Ejercicios resueltos este mes: ${totalMes}${catLines ? '\n'+catLines : ''}
+
+🔥 Racha actual: ${stats.streak} día${stats.streak!==1?'s':''}
+👑 Coronas totales: ${stats.totalCoronas}
+📚 Ejercicios resueltos en total: ${stats.exercisesSolved}
+🤖 Victorias contra el bot: ${stats.botWins}
+
+${totalMes>0 ? '¡Excelente trabajo este mes! 🎉' : 'Todavía no resolvió ejercicios este mes.'}`;
+
+  const canShare = typeof navigator.share === 'function';
+  body.innerHTML = `
+    <textarea id="monthly-report-text" readonly style="width:100%;min-height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--cream);padding:0.8rem;font-size:0.85rem;line-height:1.5;font-family:inherit;resize:vertical">${texto}</textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.8rem">
+      <button class="btn btn-add" style="flex:1" onclick="copyMonthlyReport()">📋 Copiar</button>
+      ${canShare ? `<button class="btn" style="flex:1;background:var(--surface2)" onclick="shareMonthlyReport()">📤 Compartir</button>` : ''}
+    </div>
+    <div id="monthly-report-status" style="font-size:0.78rem;color:#5ae89a;margin-top:0.5rem;display:none"></div>`;
+}
+
+function copyMonthlyReport(){
+  const textarea = document.getElementById('monthly-report-text');
+  const status = document.getElementById('monthly-report-status');
+  textarea.select();
+  try{
+    navigator.clipboard.writeText(textarea.value).then(()=>{
+      status.textContent = '✓ Copiado. Ya lo podés pegar en WhatsApp.';
+      status.style.display = 'block';
+      setTimeout(()=>{ status.style.display='none'; }, 3000);
+    });
+  }catch(e){
+    document.execCommand('copy');
+    status.textContent = '✓ Copiado.';
+    status.style.display = 'block';
+  }
+}
+
+function shareMonthlyReport(){
+  const textarea = document.getElementById('monthly-report-text');
+  navigator.share({ text: textarea.value }).catch(()=>{});
+}
+
 async function toggleBlock(userId, currentBlocked){
   const newBlocked = currentBlocked === 'true' || currentBlocked === true ? false : true;
   await dbUpdate('users', userId, {blocked: newBlocked});
+  renderUsers();
+}
+
+async function toggleHidden(userId, currentHidden){
+  const newHidden = currentHidden === 'true' || currentHidden === true ? false : true;
+  await dbUpdate('users', userId, {hidden: newHidden});
+  if(currentUser && String(currentUser.id) === String(userId)) currentUser.hidden = newHidden;
+  renderUsers();
+}
+
+async function editUserName(userId, currentName){
+  const nuevoNombre = prompt('Nombre y apellido del alumno:', currentName);
+  if(nuevoNombre === null) return; // canceló
+  const trimmed = nuevoNombre.trim();
+  if(!trimmed){ alert('El nombre no puede quedar vacío.'); return; }
+  if(trimmed.toLowerCase() === currentName.toLowerCase()) return; // no cambió nada
+  const clash = await dbGet('users', `name=ilike.${encodeURIComponent(trimmed)}`);
+  if(clash && clash.some(u => String(u.id) !== String(userId))){
+    alert('Ya existe otro alumno registrado con ese nombre exacto. Elegí uno un poco distinto (por ejemplo, agregando una inicial) para no mezclar las cuentas.');
+    return;
+  }
+  const res = await dbUpdate('users', userId, {name: trimmed});
+  if(!res || res.__error){ alert('No se pudo actualizar el nombre. Probá de nuevo.'); return; }
+  alert(`Nombre actualizado a: "${trimmed}"\n\nAvisale al alumno que de ahora en más tiene que entrar con ese nombre.`);
   renderUsers();
 }
 
@@ -3018,7 +3152,71 @@ window.addEventListener('DOMContentLoaded', function(){
   initParticles();
   initStockfish();
   restoreSession();
+  initInstallPrompt();
 });
+
+// ── Instalar la app en el celular ──
+let _deferredInstallPrompt = null;
+
+function initInstallPrompt(){
+  // Registrar el service worker (necesario en Android/Chrome para poder instalar)
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+
+  // ¿Ya está instalada / abierta como app? No mostramos nada.
+  const yaEsApp = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if(yaEsApp) return;
+
+  try{ if(localStorage.getItem('shahmat_install_dismissed')==='1') return; }catch(e){}
+
+  // Android / Chrome / Edge: el navegador avisa cuando se puede instalar
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    showInstallBanner(false);
+  });
+
+  // iOS Safari no tiene instalación automática: mostramos instrucciones manuales
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if(isIOS){
+    showInstallBanner(true);
+  }
+}
+
+function showInstallBanner(isIOS){
+  if(document.getElementById('install-banner')) return; // ya está mostrado
+  const banner = document.createElement('div');
+  banner.id = 'install-banner';
+  banner.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:500;background:var(--surface);border-top:1.5px solid var(--gold);padding:0.8rem 1rem;display:flex;align-items:center;gap:0.7rem;box-shadow:0 -4px 16px rgba(0,0,0,0.4)';
+  if(isIOS){
+    banner.innerHTML = `
+      <div style="font-size:1.4rem">📲</div>
+      <div style="flex:1;font-size:0.78rem;color:var(--cream);line-height:1.35">Instalá Shah Mat en tu celular: tocá <b>compartir</b> (⬆️) y elegí <b>"Agregar a pantalla de inicio"</b>.</div>
+      <button onclick="dismissInstallBanner()" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 0.3rem">×</button>`;
+  } else {
+    banner.innerHTML = `
+      <div style="font-size:1.4rem">📲</div>
+      <div style="flex:1;font-size:0.82rem;color:var(--cream)">Instalá Shah Mat en tu celular para entrar más rápido.</div>
+      <button onclick="installApp()" class="btn btn-add" style="padding:0.4rem 0.8rem;font-size:0.78rem;white-space:nowrap">Instalar</button>
+      <button onclick="dismissInstallBanner()" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 0.3rem">×</button>`;
+  }
+  document.body.appendChild(banner);
+}
+
+async function installApp(){
+  if(!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  await _deferredInstallPrompt.userChoice;
+  _deferredInstallPrompt = null;
+  dismissInstallBanner();
+}
+
+function dismissInstallBanner(){
+  const banner = document.getElementById('install-banner');
+  if(banner) banner.remove();
+  try{ localStorage.setItem('shahmat_install_dismissed','1'); }catch(e){}
+}
 
 // =============================================
 // FINALES QUE TODOS DEBEN CONOCER
@@ -3116,6 +3314,31 @@ let _weeklyAdminSelected = null; // casilla seleccionada en el admin
 let _countdownInterval = null;
 
 // Obtener la semana actual como string "YYYY-Wnn"
+// Semana del RANKING (distinta a la del evento semanal): arranca el sábado 00:00
+// y cierra el viernes a las 22:00. Cualquier fecha se ubica dentro de "su" semana
+// calculando el sábado en el que arrancó.
+function getWeekStartForDate(date){
+  const d = new Date(date);
+  const day = d.getDay(); // 0=domingo,...,5=viernes,6=sabado
+  const hour = d.getHours();
+  let daysSinceSaturday = (day + 1) % 7; // sabado=0, domingo=1, lunes=2,...,viernes=6
+  if(day === 5 && hour >= 22){
+    // Viernes desde las 22:00 en adelante ya cuenta como la semana que arranca este sábado
+    daysSinceSaturday = -1;
+  }
+  const saturday = new Date(d);
+  saturday.setHours(0,0,0,0);
+  saturday.setDate(d.getDate() - daysSinceSaturday);
+  return saturday;
+}
+function getRankingWeekId(date){
+  const sat = getWeekStartForDate(date || new Date());
+  const y = sat.getFullYear();
+  const m = String(sat.getMonth()+1).padStart(2,'0');
+  const d = String(sat.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+
 function getCurrentWeekId(){
   const now = new Date();
   const jan4 = new Date(now.getFullYear(), 0, 4);
@@ -3535,7 +3758,8 @@ async function openLiveLobby(){
       await liveLobbyChannel.track({
         id: currentUser.id,
         name: currentUser.name,
-        avatar: currentUser.avatar || '♟'
+        avatar: currentUser.avatar || '♟',
+        hidden: !!currentUser.hidden
       });
       renderLiveLobby();
     }
@@ -3780,7 +4004,8 @@ let liveGameOver = false;
 
 const LIVE_RESULT_LABELS = {
   checkmate: 'Jaque mate', timeout: 'Se acabó el tiempo', resignation: 'Abandono',
-  disconnect: 'El rival no volvió a conectarse', stalemate: 'Ahogado', draw: 'Tablas'
+  disconnect: 'El rival no volvió a conectarse', stalemate: 'Ahogado', draw: 'Tablas',
+  draw_agreement: 'Tablas acordadas'
 };
 
 async function enterLiveGame(gameId){
@@ -3811,6 +4036,8 @@ async function enterLiveGame(gameId){
   document.getElementById('live-clocks-wrap').style.display = tc.base==null ? 'none' : 'flex';
 
   document.getElementById('live-resign-btn').style.display = 'block';
+  const drawBtn = document.getElementById('live-draw-btn');
+  if(drawBtn){ drawBtn.style.display = 'block'; drawBtn.disabled = false; drawBtn.textContent = '🤝 Ofrecer tablas'; }
   document.getElementById('live-back-btn').style.display = 'none';
   document.getElementById('live-mate-side-panel').classList.remove('show','win','lose');
 
@@ -3820,6 +4047,8 @@ async function enterLiveGame(gameId){
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'live_games', filter:`id=eq.${gameId}` }, (payload)=>{
       onLiveGameRowChange(payload.new);
     })
+    .on('broadcast', { event:'draw-offer' }, ({payload})=> handleDrawOffer(payload))
+    .on('broadcast', { event:'draw-decline' }, ({payload})=> handleDrawDecline(payload))
     .subscribe();
 
   // Presencia por partida (para detectar desconexión del rival)
@@ -4068,11 +4297,44 @@ function resignLiveGame(){
   dbUpdate('live_games', liveGameId, { status:'finished', result:winner, result_reason:'resignation' });
 }
 
+function offerDraw(){
+  if(liveGameOver || !liveGameId || !liveGameChannel) return;
+  liveGameChannel.send({ type:'broadcast', event:'draw-offer', payload:{ fromId:String(currentUser.id) } });
+  const btn = document.getElementById('live-draw-btn');
+  if(btn){ btn.disabled = true; btn.textContent = '🤝 Tablas ofrecidas...'; }
+  setTimeout(()=>{ if(btn && !liveGameOver){ btn.disabled = false; btn.textContent = '🤝 Ofrecer tablas'; } }, 15000);
+}
+
+function handleDrawOffer(payload){
+  if(liveGameOver || String(payload.fromId) === String(currentUser.id)) return; // no mostrarme mi propia oferta
+  document.getElementById('incoming-draw-modal').style.display = 'flex';
+}
+
+function respondDrawOffer(accepted){
+  document.getElementById('incoming-draw-modal').style.display = 'none';
+  if(!liveGameId || liveGameOver) return;
+  if(accepted){
+    liveGameOver = true;
+    dbUpdate('live_games', liveGameId, { status:'finished', result:'draw', result_reason:'draw_agreement' });
+  } else {
+    liveGameChannel.send({ type:'broadcast', event:'draw-decline', payload:{ toId: null } });
+  }
+}
+
+function handleDrawDecline(){
+  const btn = document.getElementById('live-draw-btn');
+  if(btn){ btn.disabled = false; btn.textContent = '🤝 Ofrecer tablas'; }
+  const bar = document.getElementById('live-status-bar');
+  if(bar && !liveGameOver){ bar.textContent = 'Tu rival rechazó las tablas.'; bar.style.color = '#e08080'; setTimeout(()=>{ if(!liveGameOver) updateLiveStatusBar(); }, 2500); }
+}
+
 function showLiveGameEndPanel(row){
   liveGameOver = true;
   if(liveClockInterval){ clearInterval(liveClockInterval); liveClockInterval=null; }
   if(liveDisconnectTimer){ clearTimeout(liveDisconnectTimer); liveDisconnectTimer=null; }
   document.getElementById('live-resign-btn').style.display = 'none';
+  const drawBtnEnd = document.getElementById('live-draw-btn');
+  if(drawBtnEnd) drawBtnEnd.style.display = 'none';
   document.getElementById('live-back-btn').style.display = 'block';
 
   const panel = document.getElementById('live-mate-side-panel');
@@ -4102,9 +4364,140 @@ function leaveLiveGame(){
   if(liveDisconnectTimer){ clearTimeout(liveDisconnectTimer); liveDisconnectTimer=null; }
   liveGameId = null; liveGameRow = null; liveChessGame = null; liveGameOver = false;
   liveOpponentDisconnected = false;
+  const drawModal = document.getElementById('incoming-draw-modal');
+  if(drawModal) drawModal.style.display = 'none';
   document.getElementById('live-game-area').style.display = 'none';
   document.getElementById('live-lobby-container').style.display = 'block';
   renderLiveLobby();
+}
+
+// ══════════════════════════════════════════════════════════
+// MODO COORDENADAS CONTRARRELOJ
+// ══════════════════════════════════════════════════════════
+const COORD_ROUND_SECONDS = 60;
+let coordTimer = null;
+let coordTimeLeft = 0;
+let coordScore = 0;
+let coordErrors = 0;
+let coordTarget = null;
+let coordRoundActive = false;
+
+function renderCoordinatesIntro(){
+  stopCoordRound();
+  const container = document.getElementById('coord-container');
+  if(!container) return;
+  const best = (currentUser && currentUser.coord_best_score) || 0;
+  container.innerHTML = `
+    <div style="text-align:center;padding:1rem 0">
+      <div style="font-size:2.5rem;margin-bottom:0.5rem">🎯</div>
+      <div style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.1rem;margin-bottom:0.5rem">Entrená tu visión del tablero</div>
+      <div style="font-size:0.85rem;color:var(--muted);max-width:320px;margin:0 auto 1.2rem">Va a aparecer una coordenada arriba (por ejemplo <b style="color:var(--cream)">e4</b>). Tocá esa casilla en el tablero lo más rápido posible, antes de que se acabe el tiempo.</div>
+      <div style="font-size:0.8rem;color:var(--muted);margin-bottom:1.4rem">Mejor puntaje: <span style="color:var(--gold);font-weight:700">${best}</span></div>
+      <button class="btn btn-add" onclick="startCoordRound()">▶ Empezar (60 segundos)</button>
+    </div>`;
+}
+
+function startCoordRound(){
+  coordScore = 0;
+  coordErrors = 0;
+  coordTimeLeft = COORD_ROUND_SECONDS;
+  coordRoundActive = true;
+  coordTarget = null;
+  pickNewCoordTarget();
+  drawCoordScreen();
+  if(coordTimer) clearInterval(coordTimer);
+  coordTimer = setInterval(()=>{
+    coordTimeLeft--;
+    const tEl = document.getElementById('coord-timer');
+    if(tEl) tEl.textContent = coordTimeLeft;
+    if(coordTimeLeft<=0){ endCoordRound(); }
+  }, 1000);
+}
+
+function stopCoordRound(){
+  if(coordTimer){ clearInterval(coordTimer); coordTimer=null; }
+  coordRoundActive = false;
+}
+
+function pickNewCoordTarget(){
+  let next;
+  do {
+    next = FILES[Math.floor(Math.random()*8)] + (Math.floor(Math.random()*8)+1);
+  } while(next === coordTarget);
+  coordTarget = next;
+}
+
+function drawCoordScreen(){
+  const container = document.getElementById('coord-container');
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem">
+      <div style="font-size:0.85rem;color:var(--muted)">⏱ <span id="coord-timer" style="color:var(--cream);font-weight:700">${coordTimeLeft}</span>s</div>
+      <div style="font-size:0.85rem;color:var(--muted)">Puntos: <span id="coord-score" style="color:var(--gold);font-weight:700">${coordScore}</span></div>
+    </div>
+    <div style="text-align:center;margin-bottom:0.8rem">
+      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em">Tocá la casilla</div>
+      <div id="coord-target" style="font-family:'Cinzel',serif;font-size:2.3rem;color:var(--gold);font-weight:700;letter-spacing:0.05em">${coordTarget}</div>
+    </div>
+    <div style="max-width:340px;margin:0 auto;border:4px solid var(--gold);border-radius:4px;box-shadow:0 0 16px rgba(201,168,76,0.35)">
+      <div id="coord-board" style="display:grid;grid-template-columns:repeat(8,1fr);width:100%;aspect-ratio:1"></div>
+    </div>`;
+  drawCoordBoard();
+}
+
+function drawCoordBoard(flashSquare, flashColor){
+  const board = document.getElementById('coord-board');
+  if(!board) return;
+  board.innerHTML = '';
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const sqName = FILES[c] + (8-r);
+      const isLight = (r+c)%2===0;
+      const sq = document.createElement('div');
+      sq.style.cssText = `aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:${isLight?'#f0d9b5':'#b58863'};cursor:pointer;transition:background 0.15s`;
+      if(flashSquare===sqName){ sq.style.background = flashColor; }
+      sq.onclick = ()=> handleCoordClick(sqName);
+      board.appendChild(sq);
+    }
+  }
+}
+
+function handleCoordClick(sqName){
+  if(!coordRoundActive) return;
+  if(sqName === coordTarget){
+    coordScore++;
+    const scoreEl = document.getElementById('coord-score');
+    if(scoreEl) scoreEl.textContent = coordScore;
+    drawCoordBoard(sqName, '#5ae89a');
+    pickNewCoordTarget();
+    const targetEl = document.getElementById('coord-target');
+    if(targetEl) targetEl.textContent = coordTarget;
+    setTimeout(()=>{ if(coordRoundActive) drawCoordBoard(); }, 120);
+  } else {
+    coordErrors++;
+    drawCoordBoard(sqName, '#e08080');
+    setTimeout(()=>{ if(coordRoundActive) drawCoordBoard(); }, 200);
+  }
+}
+
+async function endCoordRound(){
+  stopCoordRound();
+  const container = document.getElementById('coord-container');
+  const prevBest = (currentUser && currentUser.coord_best_score) || 0;
+  const isNewBest = coordScore > prevBest;
+  if(isNewBest && currentUser){
+    currentUser.coord_best_score = coordScore;
+    try{ await dbUpdate('users', currentUser.id, { coord_best_score: coordScore }); }catch(e){}
+    const homeCoordStat = document.getElementById('home-coord-stat');
+    if(homeCoordStat) homeCoordStat.textContent = `Mejor puntaje: ${coordScore}`;
+  }
+  container.innerHTML = `
+    <div style="text-align:center;padding:1.5rem 0">
+      <div style="font-size:2.5rem;margin-bottom:0.5rem">${isNewBest ? '🏆' : '🎯'}</div>
+      <div style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.3rem;margin-bottom:0.3rem">${coordScore} casilla${coordScore!==1?'s':''}</div>
+      ${isNewBest ? '<div style="font-size:0.85rem;color:#5ae89a;margin-bottom:0.8rem">¡Nuevo mejor puntaje! 🎉</div>' : `<div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.8rem">Mejor puntaje: ${prevBest}</div>`}
+      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:1.4rem">Errores: ${coordErrors}</div>
+      <button class="btn btn-add" onclick="startCoordRound()">↺ Jugar de nuevo</button>
+    </div>`;
 }
 
 function renderPlayBot(){
@@ -4763,29 +5156,46 @@ async function loadRanking(){
   let progress = [];
   let exercises = [];
   try {
-    users = await dbGet('users', 'select=id,name&role=eq.student');
+    users = await dbGet('users', 'select=id,name,hidden&role=eq.student');
   } catch(e){ users = []; }
   try {
-    progress = await dbGet('progress', 'select=user_id,exercise_id');
+    progress = await dbGet('progress', 'select=user_id,exercise_id,created_at');
   } catch(e){ progress = []; }
   try {
     exercises = allExercises && allExercises.length ? allExercises : await dbGet('exercises','select=id,category');
   } catch(e){ exercises = []; }
 
+  // Las cuentas de prueba del profesor no cuentan para el ranking
+  const hiddenIds = new Set(users.filter(u => u.hidden).map(u => String(u.id)));
+  users = users.filter(u => !u.hidden);
+  progress = progress.filter(p => !hiddenIds.has(String(p.user_id)));
+
   // Mapa exercise_id -> categoría
   const exCatMap = {};
   exercises.forEach(ex => { exCatMap[ex.id] = ex.category; });
 
-  // Sumar puntos por usuario
+  const currentWeekId = getRankingWeekId();
+  const userNameById = {};
+  users.forEach(u => { userNameById[String(u.id)] = u.name || 'Alumno'; });
+
+  // Puntos de la semana ACTUAL solamente (el ranking se reinicia cada semana)
   const pointsByUser = {};
+  // Puntos por usuario, agrupados por semana (para el historial de semanas ganadas)
+  const pointsByUserWeek = {};
   progress.forEach(p => {
-    const cat = exCatMap[p.exercise_id];
-    const pts = pointsForCategory(cat);
+    if(!p.created_at) return;
+    const wid = getRankingWeekId(new Date(p.created_at));
+    const pts = pointsForCategory(exCatMap[p.exercise_id]);
     const uid = String(p.user_id);
-    pointsByUser[uid] = (pointsByUser[uid] || 0) + pts;
+    if(wid === currentWeekId){
+      pointsByUser[uid] = (pointsByUser[uid] || 0) + pts;
+    } else {
+      if(!pointsByUserWeek[wid]) pointsByUserWeek[wid] = {};
+      pointsByUserWeek[wid][uid] = (pointsByUserWeek[wid][uid] || 0) + pts;
+    }
   });
 
-  // Armar lista de ranking, incluso alumnos con 0 puntos
+  // Armar lista de ranking de esta semana, incluso alumnos con 0 puntos
   let ranking = users
     .filter(u => u.id !== undefined)
     .map(u => ({
@@ -4795,13 +5205,27 @@ async function loadRanking(){
     }))
     .sort((a,b) => b.points - a.points);
 
+  // Historial: cuántas semanas (ya cerradas) ganó cada alumno
+  const winCountByUser = {};
+  Object.keys(pointsByUserWeek).forEach(wid => {
+    const weekPoints = pointsByUserWeek[wid];
+    let bestUid = null, bestPts = 0;
+    Object.keys(weekPoints).forEach(uid => {
+      if(weekPoints[uid] > bestPts){ bestPts = weekPoints[uid]; bestUid = uid; }
+    });
+    if(bestUid){ winCountByUser[bestUid] = (winCountByUser[bestUid] || 0) + 1; }
+  });
+  const winsList = Object.keys(winCountByUser)
+    .map(uid => ({ id: uid, name: userNameById[uid] || 'Alumno', wins: winCountByUser[uid] }))
+    .sort((a,b) => b.wins - a.wins);
+
   if(ranking.length === 0){
     container.innerHTML = '<div class="ranking-info-box">Todavía no hay datos de ranking. ¡Resolvé ejercicios para sumar puntos!</div>';
     return;
   }
 
   const medals = ['🥇','🥈','🥉'];
-  let html = `<div class="ranking-info-box">Sumás <b>1 punto</b> por Mate en 1, <b>2 puntos</b> por Mate en 2, y <b>3 puntos</b> por Mate en 3 en adelante (incluye Finales). ¡El ranking no se reinicia nunca!</div>`;
+  let html = `<div class="ranking-info-box">Sumás <b>1 punto</b> por Mate en 1, <b>2 puntos</b> por Mate en 2, y <b>3 puntos</b> por Mate en 3 en adelante (incluye Finales). El ranking se reinicia cada semana: arranca el <b>sábado</b> y cierra el <b>viernes a las 22hs</b>.</div>`;
 
   ranking.forEach((r, i) => {
     const pos = i + 1;
@@ -4814,6 +5238,21 @@ async function loadRanking(){
       <div class="ranking-pts">${r.points}<span class="ranking-pts-label">${r.points===1?'punto':'puntos'}</span></div>
     </div>`;
   });
+
+  // Historial de semanas ganadas
+  html += `<p class="section-title" style="margin-top:1.5rem">🏆 Quién va ganando más semanas</p>`;
+  if(!winsList.length){
+    html += `<div class="ranking-info-box">Todavía no se cerró ninguna semana. ¡La primera se cierra el viernes a las 22hs!</div>`;
+  } else {
+    winsList.forEach((w, i) => {
+      const isMe = String(currentUser.id) === w.id;
+      html += `<div class="ranking-row${isMe ? ' is-me' : ''}">
+        <div class="ranking-pos">${i+1}</div>
+        <div class="ranking-name">${w.name}</div>
+        <div class="ranking-pts">${w.wins}<span class="ranking-pts-label">${w.wins===1?'semana':'semanas'}</span></div>
+      </div>`;
+    });
+  }
 
   container.innerHTML = html;
 }
@@ -4891,9 +5330,21 @@ function formatDuration(totalSeconds){
   <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.2rem;max-width:560px;width:100%;max-height:85vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
       <h3 id="student-progress-name" style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.1rem;margin:0"></h3>
-      <button onclick="closeStudentProgressModal()" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
+      <div style="display:flex;align-items:center;gap:0.6rem">
+        <button onclick="openMonthlyReport()" style="background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:5px;cursor:pointer;white-space:nowrap">📄 Reporte mensual</button>
+        <button onclick="closeStudentProgressModal()" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
+      </div>
     </div>
     <div id="student-progress-body"></div>
+  </div>
+</div>
+<div id="monthly-report-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.2rem;max-width:480px;width:100%;max-height:85vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
+      <h3 style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.05rem;margin:0">📄 Reporte mensual</h3>
+      <button onclick="document.getElementById('monthly-report-modal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <div id="monthly-report-body"></div>
   </div>
 </div>
 <!-- Elegir tiempo y enviar desafío -->
@@ -4929,6 +5380,16 @@ function formatDuration(totalSeconds){
     <div style="display:flex;gap:0.5rem">
       <button class="btn" style="flex:1;background:var(--surface2)" onclick="respondChallenge(false)">Rechazar</button>
       <button class="btn btn-add" style="flex:1" onclick="respondChallenge(true)">Aceptar</button>
+    </div>
+  </div>
+</div>
+<div id="incoming-draw-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.6rem;max-width:340px;width:100%;text-align:center">
+    <div style="font-size:2rem;margin-bottom:0.5rem">🤝</div>
+    <div style="font-size:0.95rem;color:var(--cream);margin-bottom:1.2rem">Tu rival te ofrece <b style="color:var(--gold)">tablas</b>. ¿Aceptás?</div>
+    <div style="display:flex;gap:0.5rem">
+      <button class="btn" style="flex:1;background:var(--surface2)" onclick="respondDrawOffer(false)">Rechazar</button>
+      <button class="btn btn-add" style="flex:1" onclick="respondDrawOffer(true)">Aceptar tablas</button>
     </div>
   </div>
 </div>
