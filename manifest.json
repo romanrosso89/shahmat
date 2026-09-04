@@ -1,0 +1,13 @@
+{
+  "name": "Shah Mat - Academia de Ajedrez",
+  "short_name": "Shah Mat",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#c9a84c",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
