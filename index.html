@@ -3499,7 +3499,7 @@ async function loadWeeklyEvent(){
     }
     html += `</div>`;
     if(attemptsUsed >= MAX_ATTEMPTS){
-      html += `<div class="weekly-info-box">Ya usaste tus 2 intentos esta semana. ¡Suerte la próxima!</div>`;
+      html += `<div class="weekly-info-box">Ya usaste tus ${MAX_ATTEMPTS} intentos esta semana. ¡Suerte la próxima!</div>`;
     } else {
       html += `<div class="weekly-info-box">Tenés <strong style="color:var(--cream)">${MAX_ATTEMPTS - attemptsUsed} intento${MAX_ATTEMPTS - attemptsUsed > 1 ? 's' : ''}</strong> disponible${MAX_ATTEMPTS - attemptsUsed > 1 ? 's' : ''}. ¡Elegí una casilla!</div>`;
     }
@@ -3588,7 +3588,7 @@ async function playWeeklyCell(cell){
   const MAX_ATTEMPTS = 5;
 
   if(attemptsUsed >= MAX_ATTEMPTS){
-    showWeeklyToast('miss', '❌ Ya usaste tus 2 intentos esta semana.');
+    showWeeklyToast('miss', `❌ Ya usaste tus ${MAX_ATTEMPTS} intentos esta semana.`);
     if(board) board.style.pointerEvents = '';
     return;
   }
@@ -3613,11 +3613,9 @@ async function playWeeklyCell(cell){
   // Recargar el tablero PRIMERO
   await loadWeeklyEvent();
 
-  // Mostrar toast DESPUÉS (así loadWeeklyEvent no lo pisa)
+  // Solo avisamos con un cartel cuando gana; si falla, ya se ve la cruz roja en el tablero.
   if(isWinner){
     showWeeklyToast('winner', `🏆 ¡GANASTE! La casilla ${cell.toUpperCase()} tenía el logo. ¡Hablá con tu profe para reclamar el premio!`);
-  } else {
-    showWeeklyToast('miss', `❌ La casilla ${cell.toUpperCase()} no tenía el logo. ${remaining > 0 ? '¡Te queda 1 intento más!' : 'Sin intentos restantes esta semana.'}`);
   }
 }
 
@@ -3647,7 +3645,7 @@ async function loadWeeklyEventSilent(){
     const rem = MAX_ATTEMPTS - attemptsUsed;
     infoEl.innerHTML = rem > 0
       ? `Tenés <strong style="color:var(--cream)">${rem} intento${rem>1?'s':''}</strong> disponible${rem>1?'s':''}.`
-      : 'Ya usaste tus 2 intentos esta semana.';
+      : `Ya usaste tus ${MAX_ATTEMPTS} intentos esta semana.`;
   }
 
   // Actualizar casillas del tablero
