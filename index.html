@@ -196,6 +196,11 @@
   .home-card.card-cuenta .home-card-stat{color:#e85ae8}
   .home-card.card-evento{background:linear-gradient(135deg,#5e1a1a,#400e0e);border-color:#c83a3a}
   .home-card.card-evento .home-card-stat{color:#ff7a7a}
+  .home-card.card-evento.event-live{border-width:2px;border-color:#ffcf4d;animation:eventGlow 1.8s ease-in-out infinite}
+  @keyframes eventGlow{
+    0%,100%{box-shadow:0 0 8px 0 rgba(255,207,77,0.35)}
+    50%{box-shadow:0 0 22px 4px rgba(255,207,77,0.75)}
+  }
   .home-card.card-ranking{background:linear-gradient(135deg,#5e4a1a,#402e0e);border-color:#c89a3a}
   .home-card.card-ranking .home-card-stat{color:#ffc94d}
   .home-card.card-racha{background:linear-gradient(135deg,#5e2a0e,#401a08);border-color:#ff6a00}
@@ -207,6 +212,8 @@
   .home-card.card-coord{background:linear-gradient(135deg,#2e1a0e,#1c130a);border-color:#c88a3a}
   .home-card.card-coord .home-card-stat{color:#e8b25a}
   .empty-state .icon{font-size:2.5rem;margin-bottom:0.8rem}
+  #weekly-event-toggle:checked + #weekly-event-toggle-track{background:var(--gold)}
+  #weekly-event-toggle:checked ~ #weekly-event-toggle-knob{transform:translateX(20px)}
   .loading{text-align:center;padding:2rem;color:var(--muted);font-size:0.9rem}
   .spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:0.5rem;vertical-align:middle}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -472,7 +479,7 @@
         <div class="home-card-desc">Sumá coronas jugando, resolviendo ejercicios y ganándole al bot</div>
         <div class="home-card-stat" id="home-coronas-stat">Tocá para ver</div>
       </div>
-      <div class="home-card card-evento full-width" onclick="showStudentSection('weekly-event')">
+      <div class="home-card card-evento full-width" id="home-card-evento" onclick="showStudentSection('weekly-event')">
         <div class="home-card-icon">🏆</div>
         <div class="home-card-title">Evento de la semana</div>
         <div class="home-card-desc">¡Encontrá el logo escondido en el tablero y ganás un premio!</div>
@@ -810,7 +817,18 @@
   <div id="tab-weekly-admin" class="content" style="display:none">
     <div class="admin-section">
       <h2>Evento de la semana</h2>
-      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1.2rem">Elegí la casilla ganadora. El evento corre de viernes a domingo (48hs).</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.8rem;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.2rem">
+        <div>
+          <div style="font-size:0.9rem;color:var(--cream);font-weight:600">Evento visible para los alumnos</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.1rem">Si está apagado, no ocupa lugar en la pantalla de inicio de nadie.</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:46px;height:26px;flex-shrink:0">
+          <input type="checkbox" id="weekly-event-toggle" onchange="toggleWeeklyEventActive()" style="opacity:0;width:0;height:0">
+          <span id="weekly-event-toggle-track" style="position:absolute;inset:0;background:var(--border);border-radius:26px;cursor:pointer;transition:0.2s"></span>
+          <span id="weekly-event-toggle-knob" style="position:absolute;left:3px;top:3px;width:20px;height:20px;background:#fff;border-radius:50%;transition:0.2s"></span>
+        </label>
+      </div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1.2rem">Elegí la casilla ganadora. Mientras esté activado, el evento corre de viernes a domingo (48hs).</p>
       <div id="admin-weekly-board"></div>
       <div style="margin-top:1rem;display:flex;gap:0.8rem;flex-wrap:wrap">
         <button class="btn" onclick="saveWeeklyWinner()" style="flex:1">Guardar casilla ganadora</button>
@@ -1325,6 +1343,25 @@ async function renderStudentView() {
 
   const homeCoordStat = document.getElementById('home-coord-stat');
   if(homeCoordStat) homeCoordStat.textContent = `Mejor puntaje: ${u.coord_best_score || '—'}`;
+
+  // Mostrar/ocultar la tarjeta de "Evento de la semana" según lo que haya elegido el profe
+  const eventoCard = document.getElementById('home-card-evento');
+  if(eventoCard){
+    try {
+      const settingRows = await dbGet('app_settings', 'key=eq.weekly_event_active');
+      const activo = !!(settingRows && settingRows[0] && settingRows[0].value === 'true');
+      eventoCard.style.display = activo ? 'flex' : 'none';
+      if(activo){
+        eventoCard.style.order = '-1'; // la sube arriba de todas las demás tarjetas
+        eventoCard.classList.add('event-live');
+        const eventStat = document.getElementById('home-event-stat');
+        if(eventStat) eventStat.textContent = '🔥 ¡Activo ahora! Tocá para jugar';
+      } else {
+        eventoCard.style.order = '';
+        eventoCard.classList.remove('event-live');
+      }
+    } catch(e){ eventoCard.style.display = 'none'; }
+  }
 
   // Cargar racha y mostrar badge
   try {
@@ -2811,6 +2848,22 @@ async function saveAccessCode(){
   setTimeout(()=>{ status.style.display='none'; }, 3000);
 }
 
+async function toggleWeeklyEventActive(){
+  const toggleEl = document.getElementById('weekly-event-toggle');
+  const nuevoValor = toggleEl.checked ? 'true' : 'false';
+  const rows = await dbGet('app_settings', 'key=eq.weekly_event_active');
+  let res;
+  if(rows && rows.length){
+    res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?key=eq.weekly_event_active`, {method:'PATCH',headers:H,body:JSON.stringify({value:nuevoValor})});
+  } else {
+    res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {method:'POST',headers:H,body:JSON.stringify({key:'weekly_event_active',value:nuevoValor})});
+  }
+  if(!res.ok){
+    toggleEl.checked = !toggleEl.checked; // revertir si falló el guardado
+    alert('No se pudo guardar el cambio. Probá de nuevo.');
+  }
+}
+
 async function renderUsers(){
   loadAccessCode();
   const listEl = document.getElementById('users-list');
@@ -3209,7 +3262,10 @@ async function installApp(){
   _deferredInstallPrompt.prompt();
   await _deferredInstallPrompt.userChoice;
   _deferredInstallPrompt = null;
-  dismissInstallBanner();
+  const banner = document.getElementById('install-banner');
+  if(banner) banner.remove();
+  // No guardamos la marca de "no mostrar más" acá: si el alumno desinstala la
+  // app más adelante, queremos que el cartel pueda volver a aparecer solo.
 }
 
 function dismissInstallBanner(){
@@ -3367,9 +3423,10 @@ function formatCountdown(ms){
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
+let _weeklyEventEnabled = false; // se actualiza cada vez que se carga la pantalla del evento
+
 function isEventActive(){
-  const day = new Date().getDay();
-  return day === 5 || day === 6 || day === 0; // viernes a domingo
+  return _weeklyEventEnabled;
 }
 
 // Cargar y mostrar la sección del evento para el alumno
@@ -3377,6 +3434,16 @@ async function loadWeeklyEvent(){
   _weeklyAdminSelected = null; // nunca mostrar la casilla admin en la vista del alumno
   const container = document.getElementById('weekly-event-container');
   container.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted)">Cargando...</div>';
+
+  try {
+    const settingRows = await dbGet('app_settings', 'key=eq.weekly_event_active');
+    _weeklyEventEnabled = !!(settingRows && settingRows[0] && settingRows[0].value === 'true');
+  } catch(e){ _weeklyEventEnabled = false; }
+
+  if(!_weeklyEventEnabled){
+    container.innerHTML = '<div class="weekly-info-box">El evento de esta semana todavía no arrancó. ¡Volvé a mirar más tarde!</div>';
+    return;
+  }
 
   const weekId = getCurrentWeekId();
 
@@ -3614,6 +3681,14 @@ async function loadWeeklyEventSilent(){
 async function loadAdminWeeklyBoard(){
   const container = document.getElementById('admin-weekly-board');
   const weekId = getCurrentWeekId();
+
+  const toggleEl = document.getElementById('weekly-event-toggle');
+  if(toggleEl){
+    try {
+      const settingRows = await dbGet('app_settings', 'key=eq.weekly_event_active');
+      toggleEl.checked = !!(settingRows && settingRows[0] && settingRows[0].value === 'true');
+    } catch(e){ toggleEl.checked = false; }
+  }
 
   let eventData = null;
   try {
