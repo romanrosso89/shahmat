@@ -1622,36 +1622,6 @@ let timerInterval = null;
 let timerSeconds = 0;
 let exerciseStartTime = null;
 
-function startTimer(){
-  clearInterval(timerInterval);
-  timerSeconds = 0;
-  exerciseStartTime = Date.now();
-  updateTimerDisplay();
-  timerInterval = setInterval(()=>{
-    timerSeconds++;
-    updateTimerDisplay();
-  }, 1000);
-}
-
-function stopTimer(){
-  clearInterval(timerInterval);
-  return timerSeconds;
-}
-
-function updateTimerDisplay(){
-  const m = String(Math.floor(timerSeconds/60)).padStart(2,'0');
-  const s = String(timerSeconds%60).padStart(2,'0');
-  const el = document.getElementById('timer-display');
-  if(el) el.textContent = m+':'+s;
-}
-
-function formatTime(secs){
-  if(!secs) return '—';
-  const m = Math.floor(secs/60);
-  const s = secs%60;
-  return m>0 ? `${m}m ${s}s` : `${s}s`;
-}
-
 // ── PROGRESS ─────────────────────────────────────────────────
 async function markSolved(){
   if(!currentExercise || !currentUser) return;
@@ -1674,12 +1644,6 @@ async function markSolved(){
   if(ind) ind.innerHTML = '<span class="solved-badge">✓ Resuelto</span>';
 }
 
-async function checkIfSolved(exerciseId){
-  if(!currentUser) return false;
-  const res = await dbGet('progress', `user_id=eq.${currentUser.id}&exercise_id=eq.${exerciseId}`);
-  return res.length > 0 ? res[0] : null;
-}
-
 // Override openExercise to start timer and check progress
 
 // Override showTab to load profile progress
@@ -1687,37 +1651,6 @@ const _origShowTab = showTab;
 
 
 // Admin stats
-// Floating chess pieces particles on login
-function initParticles() {
-  const container = document.getElementById('particles');
-  const pieces = ['♔','♕','♖','♗','♘','♙','♚','♛','♜','♝','♞','♟'];
-  for(let i = 0; i < 15; i++) {
-    const p = document.createElement('div');
-    p.className = 'particle';
-    p.textContent = pieces[Math.floor(Math.random() * pieces.length)];
-    p.style.left = Math.random() * 100 + '%';
-    p.style.fontSize = (0.8 + Math.random() * 1.5) + 'rem';
-    p.style.animationDuration = (8 + Math.random() * 15) + 's';
-    p.style.animationDelay = (Math.random() * 10) + 's';
-    container.appendChild(p);
-  }
-}
-initParticles();
-
-// Animate cards when they appear
-function animateCards() {
-  const cards = document.querySelectorAll('.exercise-card, .user-card');
-  cards.forEach((card, i) => {
-    card.style.opacity = '0';
-    card.style.transform = 'translateY(20px)';
-    setTimeout(() => {
-      card.style.transition = 'opacity 0.4s ease, transform 0.4s ease, border-color 0.3s, background 0.3s, box-shadow 0.3s';
-      card.style.opacity = '1';
-      card.style.transform = 'translateY(0)';
-    }, i * 80);
-  });
-}
-
 // ── CHESS BOARD ─────────────────────────────────────────────
 let chessGame = null;
 let selectedSquare = null;
