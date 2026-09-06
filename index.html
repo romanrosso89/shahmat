@@ -1769,6 +1769,14 @@ function renderBoard(fen){
   drawBoard();
 }
 
+function resetBoard(){
+  if(!currentExercise || !initialFen) return;
+  currentExercise._moveIndex = 0;
+  renderBoard(initialFen);
+  updateGameStatus();
+  startTimer();
+}
+
 function drawBoard(){
   const container=document.getElementById('chess-board');
   container.innerHTML='';
@@ -1986,8 +1994,6 @@ function finalizeMainMove(from,to,promo){
 
 async function checkAutoSolve(from,to){
   if(!currentExercise||!currentUser)return;
-  const btn=document.getElementById('solve-btn');
-  if(btn&&btn.disabled)return;
 
   const moveMade = from+to;
   const solutionMoves = (currentExercise.solution||'').toLowerCase().trim().split(/\s+/).filter(m=>m.length>=4);
@@ -2115,7 +2121,7 @@ function updateGameStatus(){
     }
   }
   else if(chessGame.in_check()){
-    s.textContent='⚠ ¡Jaque!';s.style.cssText='display:block;text-align:center;padding:0.6rem;background:rgba(160,80,80,0.2);border:1px solid rgba(160,80,80,0.4);border-radius:3px;color:#e08080;margin-top:0.5rem';
+    s.style.display='none';
     if(sidePanel) sidePanel.classList.remove('show');
   }
   else{
