@@ -3799,9 +3799,12 @@ function renderLiveLobby(){
   const others = Object.values(liveOnlineUsers).filter(u => String(u.id) !== String(currentUser.id));
 
   let html = `
-    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
-      <span style="width:9px;height:9px;border-radius:50%;background:#5ae89a;box-shadow:0 0 6px #5ae89a;display:inline-block"></span>
-      <span style="font-size:0.8rem;color:var(--muted)">Estás conectado — ${others.length} alumno${others.length!==1?'s':''} más en la sala</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <span style="width:9px;height:9px;border-radius:50%;background:#5ae89a;box-shadow:0 0 6px #5ae89a;display:inline-block"></span>
+        <span style="font-size:0.8rem;color:var(--muted)">Estás conectado — ${others.length} alumno${others.length!==1?'s':''} más en la sala</span>
+      </div>
+      <button onclick="openGameHistory()" style="background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:5px;cursor:pointer;white-space:nowrap">📜 Mis partidas</button>
     </div>`;
 
   if(!others.length){
@@ -4381,6 +4384,130 @@ function leaveLiveGame(){
   document.getElementById('live-game-area').style.display = 'none';
   document.getElementById('live-lobby-container').style.display = 'block';
   renderLiveLobby();
+}
+
+// ══════════════════════════════════════════════════════════
+// HISTORIAL DE PARTIDAS EN VIVO (con PGN para analizar)
+// ══════════════════════════════════════════════════════════
+let _gameHistoryRows = [];
+
+async function openGameHistory(){
+  const modal = document.getElementById('game-history-modal');
+  const list = document.getElementById('game-history-list');
+  const search = document.getElementById('game-history-search');
+  if(search) search.value = '';
+  list.innerHTML = '<div class="loading"><span class="spinner"></span>Cargando...</div>';
+  modal.style.display = 'flex';
+
+  const uid = String(currentUser.id);
+  let rows = [];
+  try {
+    rows = await dbGet('live_games', `or=(white_id.eq.${uid},black_id.eq.${uid})&status=eq.finished&order=created_at.desc`);
+  } catch(e){ rows = []; }
+  _gameHistoryRows = rows || [];
+  renderGameHistoryList();
+}
+
+function renderGameHistoryList(){
+  const list = document.getElementById('game-history-list');
+  const search = document.getElementById('game-history-search');
+  const query = (search ? search.value : '').trim().toLowerCase();
+  const uid = String(currentUser.id);
+
+  let rows = _gameHistoryRows;
+  if(query){
+    rows = rows.filter(r => (r.white_name||'').toLowerCase().includes(query) || (r.black_name||'').toLowerCase().includes(query));
+  }
+
+  if(!rows.length){
+    list.innerHTML = `<div style="text-align:center;padding:2rem 1rem;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:0.5rem">📭</div>
+      <div style="font-size:0.85rem">${_gameHistoryRows.length ? 'No hay partidas con ese nombre.' : 'Todavía no jugaste ninguna partida en vivo.'}</div>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = rows.map(r => {
+    const soyBlancas = String(r.white_id) === uid;
+    const rival = soyBlancas ? r.black_name : r.white_name;
+    const miColor = soyBlancas ? 'w' : 'b';
+    let resultado, color;
+    if(r.result === 'draw'){ resultado = '🤝 Tablas'; color = 'var(--muted)'; }
+    else if(r.result === miColor){ resultado = '🏆 Ganaste'; color = '#5ae89a'; }
+    else { resultado = '💀 Perdiste'; color = '#e08080'; }
+    const fecha = r.created_at ? new Date(r.created_at).toLocaleDateString('es-AR', {day:'numeric',month:'short',year:'numeric'}) : '';
+    return `
+      <div onclick='viewGamePgn(${r.id})' style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:0.5rem;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:0.6rem">
+        <div>
+          <div style="font-size:0.88rem;color:var(--cream);font-weight:600">vs ${rival || 'Rival'}</div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.15rem">${fecha} · Jugaste con ${miColor==='w'?'blancas':'negras'}</div>
+        </div>
+        <div style="font-size:0.82rem;font-weight:600;color:${color};white-space:nowrap">${resultado}</div>
+      </div>`;
+  }).join('');
+}
+
+function buildPgnFromGame(row){
+  const g = new Chess();
+  const uciMoves = (row.moves||'').trim().split(/\s+/).filter(m=>m.length>=4);
+  const sanMoves = [];
+  for(const m of uciMoves){
+    let mv = null;
+    try{ mv = g.move({from:m.substring(0,2), to:m.substring(2,4), promotion:m.length>4?m[4]:'q'}); }catch(e){}
+    if(!mv) break;
+    sanMoves.push(mv.san);
+  }
+  let resultTag = '*';
+  if(row.result==='white') resultTag='1-0';
+  else if(row.result==='black') resultTag='0-1';
+  else if(row.result==='draw') resultTag='1/2-1/2';
+  const dateStr = row.created_at ? new Date(row.created_at).toISOString().slice(0,10).replace(/-/g,'.') : '????.??.??';
+
+  let pgn = `[Event "Shah Mat - Partida en vivo"]\n[Site "Academia Shah Mat"]\n[Date "${dateStr}"]\n[White "${row.white_name||'?'}"]\n[Black "${row.black_name||'?'}"]\n[Result "${resultTag}"]\n\n`;
+  let moveText = '';
+  for(let i=0;i<sanMoves.length;i++){
+    if(i%2===0) moveText += `${Math.floor(i/2)+1}. `;
+    moveText += sanMoves[i] + ' ';
+  }
+  moveText += resultTag;
+  pgn += moveText;
+  return pgn;
+}
+
+function viewGamePgn(gameId){
+  const row = _gameHistoryRows.find(r => String(r.id) === String(gameId));
+  if(!row) return;
+  const uid = String(currentUser.id);
+  const soyBlancas = String(row.white_id) === uid;
+  const rival = soyBlancas ? row.black_name : row.white_name;
+
+  document.getElementById('game-pgn-title').textContent = `vs ${rival || 'Rival'}`;
+  const pgn = buildPgnFromGame(row);
+  document.getElementById('game-pgn-body').innerHTML = `
+    <textarea id="game-pgn-text" readonly style="width:100%;min-height:220px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--cream);padding:0.8rem;font-size:0.82rem;line-height:1.5;font-family:monospace;resize:vertical">${pgn}</textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.8rem">
+      <button class="btn btn-add" style="flex:1" onclick="copyGamePgn()">📋 Copiar PGN</button>
+    </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin-top:0.6rem">Pegá este texto en <a href="https://lichess.org/paste" target="_blank" style="color:var(--gold)">lichess.org/paste</a> para analizarla con el motor gratis.</div>
+    <div id="game-pgn-status" style="font-size:0.78rem;color:#5ae89a;margin-top:0.5rem;display:none"></div>`;
+  document.getElementById('game-pgn-modal').style.display = 'flex';
+}
+
+function copyGamePgn(){
+  const textarea = document.getElementById('game-pgn-text');
+  const status = document.getElementById('game-pgn-status');
+  textarea.select();
+  try{
+    navigator.clipboard.writeText(textarea.value).then(()=>{
+      status.textContent = '✓ Copiado. Ya lo podés pegar en Lichess.';
+      status.style.display = 'block';
+      setTimeout(()=>{ status.style.display='none'; }, 3000);
+    });
+  }catch(e){
+    document.execCommand('copy');
+    status.textContent = '✓ Copiado.';
+    status.style.display = 'block';
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -5403,6 +5530,25 @@ function formatDuration(totalSeconds){
       <button class="btn" style="flex:1;background:var(--surface2)" onclick="respondDrawOffer(false)">Rechazar</button>
       <button class="btn btn-add" style="flex:1" onclick="respondDrawOffer(true)">Aceptar tablas</button>
     </div>
+  </div>
+</div>
+<div id="game-history-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.2rem;max-width:480px;width:100%;max-height:85vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
+      <h3 style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.05rem;margin:0">📜 Mis partidas</h3>
+      <button onclick="document.getElementById('game-history-modal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <input type="text" id="game-history-search" placeholder="Buscar por nombre del rival..." oninput="renderGameHistoryList()" style="width:100%;margin-bottom:0.8rem">
+    <div id="game-history-list"></div>
+  </div>
+</div>
+<div id="game-pgn-modal" class="modal-overlay" style="display:none">
+  <div style="background:var(--surface);border:1.5px solid var(--gold);border-radius:8px;padding:1.2rem;max-width:480px;width:100%;max-height:85vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
+      <h3 id="game-pgn-title" style="font-family:'Cinzel',serif;color:var(--gold);font-size:1.05rem;margin:0">Partida</h3>
+      <button onclick="document.getElementById('game-pgn-modal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;line-height:1">×</button>
+    </div>
+    <div id="game-pgn-body"></div>
   </div>
 </div>
 <div id="edit-modal" class="modal-overlay" style="display:none">
