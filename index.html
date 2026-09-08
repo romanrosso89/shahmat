@@ -1062,7 +1062,7 @@ async function doLogin() {
     if(passwordOk){
       const salt = randomSalt();
       const hash = await hashPassword(pass, salt);
-      await dbUpdate('users', user.id, { password_hash: hash, password_salt: salt, password: null });
+      await dbUpdate('users', user.id, { password_hash: hash, password_salt: salt, password: '' });
     }
   }
   if(!passwordOk){ showErr('login-error','Usuario o contraseña incorrectos.'); return; }
@@ -2716,7 +2716,7 @@ async function updateUserPassword(){
   try{
     const salt = randomSalt();
     const hash = await hashPassword(pass, salt);
-    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:''});
     if(res && res.__error){
       status.textContent='Error al guardar (código '+res.status+'). '+(res.message||'Revisá los permisos de la tabla en Supabase.');
       status.style.color='var(--danger)';status.style.display='block';return;
@@ -2744,7 +2744,7 @@ async function updateAdminPassword(){
   try{
     const salt = randomSalt();
     const hash = await hashPassword(pass, salt);
-    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:''});
     if(res && res.__error){
       status.textContent='Error al guardar (código '+res.status+'). '+(res.message||'Revisá los permisos de la tabla en Supabase.');
       status.style.color='var(--danger)';status.style.display='block';return;
