@@ -710,6 +710,13 @@
   </div>
   <div id="tab-users" class="content">
     <div class="admin-section">
+      <h2>Cambiar mi contraseña</h2>
+      <input type="password" id="admin-new-pass-input" placeholder="Nueva contraseña" style="width:100%;max-width:280px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0.5rem 0.8rem;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.9rem;margin-bottom:0.5rem;box-sizing:border-box;display:block">
+      <input type="password" id="admin-new-pass-confirm" placeholder="Confirmar contraseña" style="width:100%;max-width:280px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0.5rem 0.8rem;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.9rem;margin-bottom:0.5rem;box-sizing:border-box;display:block">
+      <button class="btn btn-add" onclick="updateAdminPassword()">Cambiar contraseña</button>
+      <div id="admin-pass-change-status" style="font-size:0.8rem;margin-top:0.4rem;display:none"></div>
+    </div>
+    <div class="admin-section">
       <h2>Código de acceso para registro</h2>
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.6rem">Los alumnos necesitan este código para poder crear una cuenta (además de que vos la apruebes después). Compartíselo solo a quien quieras que se registre.</p>
       <div style="display:flex;gap:0.5rem;align-items:center">
@@ -2703,6 +2710,24 @@ async function updateUserPassword(){
     await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
     document.getElementById('new-pass-input').value='';
     document.getElementById('new-pass-confirm').value='';
+    status.textContent='✓ Contraseña actualizada correctamente.';
+    status.style.color='#7ab88a';status.style.display='block';
+    setTimeout(()=>{status.style.display='none';},3000);
+  }catch(e){status.textContent='Error al guardar.';status.style.color='var(--danger)';status.style.display='block';}
+}
+
+async function updateAdminPassword(){
+  const pass = document.getElementById('admin-new-pass-input').value;
+  const confirm = document.getElementById('admin-new-pass-confirm').value;
+  const status = document.getElementById('admin-pass-change-status');
+  if(!pass||pass.length<4){status.textContent='La contraseña debe tener al menos 4 caracteres.';status.style.color='var(--danger)';status.style.display='block';return;}
+  if(pass!==confirm){status.textContent='Las contraseñas no coinciden.';status.style.color='var(--danger)';status.style.display='block';return;}
+  try{
+    const salt = randomSalt();
+    const hash = await hashPassword(pass, salt);
+    await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    document.getElementById('admin-new-pass-input').value='';
+    document.getElementById('admin-new-pass-confirm').value='';
     status.textContent='✓ Contraseña actualizada correctamente.';
     status.style.color='#7ab88a';status.style.display='block';
     setTimeout(()=>{status.style.display='none';},3000);
