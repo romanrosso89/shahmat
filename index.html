@@ -1937,6 +1937,15 @@ async function checkAutoSolve(from,to){
   const idx = currentExercise._moveIndex||0;
   const expectedMove = solutionMoves[idx];
 
+  // Si la jugada del alumno da jaque mate, se acepta como válida aunque no
+  // coincida con la jugada exacta de la solución: puede haber más de una
+  // forma de dar mate en esa posición, y todas son correctas.
+  if(chessGame.in_checkmate()){
+    currentExercise._moveIndex = solutionMoves.length;
+    await solveExerciseComplete();
+    return;
+  }
+
   // Verificar la jugada del alumno contra la jugada esperada de la secuencia
   if(!expectedMove || moveMade !== expectedMove){
     showResultBanner('incorrect');
