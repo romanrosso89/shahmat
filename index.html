@@ -2488,7 +2488,7 @@ async function importFromLichessWithToken(){
   // si elige un grupo puntual, ese grupo se usa directamente para todos.
   function nivelSegunRating(rating){
     if(rating <= 1200) return 'Principiante';
-    if(rating <= 1800) return 'Intermedio';
+    if(rating <= 2000) return 'Intermedio';
     return 'Avanzado';
   }
   const token = document.getElementById('lichess-token').value.trim();
@@ -2707,7 +2707,17 @@ async function updateUserPassword(){
   try{
     const salt = randomSalt();
     const hash = await hashPassword(pass, salt);
-    await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    if(res && res.__error){
+      status.textContent='Error al guardar (código '+res.status+'). '+(res.message||'Revisá los permisos de la tabla en Supabase.');
+      status.style.color='var(--danger)';status.style.display='block';return;
+    }
+    const check = await dbGet('users', `id=eq.${currentUser.id}&select=password_hash`);
+    if(!check || !check.length || check[0].password_hash!==hash){
+      status.textContent='La contraseña no se guardó (0 filas actualizadas). Puede ser un problema de permisos (RLS) en la tabla "users" de Supabase.';
+      status.style.color='var(--danger)';status.style.display='block';return;
+    }
+    currentUser.password_hash=hash;currentUser.password_salt=salt;currentUser.password=null;
     document.getElementById('new-pass-input').value='';
     document.getElementById('new-pass-confirm').value='';
     status.textContent='✓ Contraseña actualizada correctamente.';
@@ -2725,7 +2735,17 @@ async function updateAdminPassword(){
   try{
     const salt = randomSalt();
     const hash = await hashPassword(pass, salt);
-    await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    const res = await dbUpdate('users',currentUser.id,{password_hash:hash,password_salt:salt,password:null});
+    if(res && res.__error){
+      status.textContent='Error al guardar (código '+res.status+'). '+(res.message||'Revisá los permisos de la tabla en Supabase.');
+      status.style.color='var(--danger)';status.style.display='block';return;
+    }
+    const check = await dbGet('users', `id=eq.${currentUser.id}&select=password_hash`);
+    if(!check || !check.length || check[0].password_hash!==hash){
+      status.textContent='La contraseña no se guardó (0 filas actualizadas). Puede ser un problema de permisos (RLS) en la tabla "users" de Supabase.';
+      status.style.color='var(--danger)';status.style.display='block';return;
+    }
+    currentUser.password_hash=hash;currentUser.password_salt=salt;currentUser.password=null;
     document.getElementById('admin-new-pass-input').value='';
     document.getElementById('admin-new-pass-confirm').value='';
     status.textContent='✓ Contraseña actualizada correctamente.';
