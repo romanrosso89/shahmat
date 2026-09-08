@@ -90,6 +90,7 @@
   .square.light{background:var(--sq-light)}
   .square.dark{background:var(--sq-dark)}
   .piece{user-select:none;line-height:1}
+  #game-status, #move-result-banner, #video-area{display:none!important}
   .solution-area{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1rem}
   .solution-area h3{font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.6rem}
   .solution-text{font-family:'Playfair Display',serif;font-size:1rem;color:var(--cream);display:none}
@@ -485,12 +486,6 @@
         <div class="home-card-desc">¡Encontrá el logo escondido en el tablero y ganás un premio!</div>
         <div class="home-card-stat" id="home-event-stat">Tocá para jugar</div>
       </div>
-      <div class="home-card card-ranking full-width" onclick="showStudentSection('ranking')">
-        <div class="home-card-icon">🥇</div>
-        <div class="home-card-title">Ranking de la academia</div>
-        <div class="home-card-desc">Mirá tu posición entre todos los alumnos</div>
-        <div class="home-card-stat" id="home-ranking-stat">Tocá para ver</div>
-      </div>
     </div>
   </div>
 
@@ -668,18 +663,20 @@
       <div><div class="timer-label">Tiempo</div><div class="timer-display" id="timer-display">00:00</div></div>
       <div id="solved-indicator"></div>
     </div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.7rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:0.8rem">
-      <div>
-        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.3rem">Rival del ejercicio</div>
-        <div style="display:flex;align-items:center;gap:0.5rem">
-          <span id="bot-thinking" style="font-size:0.75rem;color:var(--muted);display:none">pensando...</span>
-          <span style="font-size:0.75rem;color:var(--muted)">Responde con la jugada del ejercicio</span>
+    <div id="exercise-extra-hidden" style="display:none">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.7rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:0.8rem">
+        <div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.3rem">Rival del ejercicio</div>
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span id="bot-thinking" style="font-size:0.75rem;color:var(--muted);display:none">pensando...</span>
+            <span style="font-size:0.75rem;color:var(--muted)">Responde con la jugada del ejercicio</span>
+          </div>
         </div>
       </div>
-    </div>
-    <div style="display:flex;gap:0.6rem;margin-top:-0.3rem">
-      <button class="btn" style="background:var(--surface2);animation:none;box-shadow:none;border:1px solid var(--border);color:var(--muted);flex:1;font-size:0.82rem;padding:0.5rem" onclick="resetBoard()">↺ Reiniciar</button>
-      <button class="solve-btn" id="solve-btn" style="flex:2;padding:0.5rem;font-size:0.82rem" disabled>Hacé la jugada correcta...</button>
+      <div style="display:flex;gap:0.6rem;margin-top:-0.3rem">
+        <button class="btn" style="background:var(--surface2);animation:none;box-shadow:none;border:1px solid var(--border);color:var(--muted);flex:1;font-size:0.82rem;padding:0.5rem" onclick="resetBoard()">↺ Reiniciar</button>
+        <button class="solve-btn" id="solve-btn" style="flex:2;padding:0.5rem;font-size:0.82rem" disabled>Hacé la jugada correcta...</button>
+      </div>
     </div>
     <button id="next-ex-btn" onclick="goToNextExercise()" style="display:none;width:100%;margin-top:0.6rem;padding:0.8rem;background:linear-gradient(90deg,#1a3a5e,#2a5a8e);color:#7ab8ff;border:1.5px solid #3a7bc8;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:0.92rem;font-weight:600;cursor:pointer;transition:all 0.2s;letter-spacing:0.02em">Siguiente ejercicio →</button>
     <div id="game-status" style="display:none"></div>
@@ -1543,7 +1540,6 @@ async function renderExerciseList(category,level){
 
   // Filtro de nivel (reemplaza la vieja carpeta de "Nivel" por pestañas, para no tener que navegar)
   const LEVEL_FILTERS = [
-    {key:null, label:'Todos'},
     {key:'Principiante', label:'🟢 Principiante'},
     {key:'Intermedio', label:'🟡 Intermedio'},
     {key:'Avanzado', label:'🔴 Avanzado'},
@@ -1741,14 +1737,14 @@ function drawBoard(){
       // Coordenadas: número en columna izquierda (col=0 en el loop)
       if(col===0){
         const rc=document.createElement('span');
-        rc.style.cssText='position:absolute;top:1px;left:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+((boardR%2===0)?'var(--sq-dark)':'var(--sq-light)');
+        rc.style.cssText='position:absolute;top:1px;left:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+(isLight?'var(--sq-dark)':'var(--sq-light)');
         rc.textContent = boardFlipped ? (boardR+1) : (8-boardR);
         sq.appendChild(rc);
       }
       // Coordenadas: letra en fila inferior (r=7 en el loop)
       if(r===7){
         const fc=document.createElement('span');
-        fc.style.cssText='position:absolute;bottom:1px;right:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+((boardCol%2===1)?'var(--sq-dark)':'var(--sq-light)');
+        fc.style.cssText='position:absolute;bottom:1px;right:2px;font-size:0.55rem;font-weight:700;line-height:1;z-index:3;pointer-events:none;opacity:0.9;color:'+(isLight?'var(--sq-dark)':'var(--sq-light)');
         fc.textContent=FILES[boardCol];
         sq.appendChild(fc);
       }
