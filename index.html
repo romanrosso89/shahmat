@@ -5179,24 +5179,24 @@ async function loadRacha(){
 
 // ── SISTEMA DE CORONAS Y LOGROS ──────────────────────────────
 const CORONA_RATES = {
-  perDay: 5,        // por cada día distinto que ingresa
-  perExercise: 10,  // por cada ejercicio resuelto
-  perBotWin: 15,    // por cada victoria contra el bot
+  perDay: 1,        // por cada día distinto que ingresa
+  perExercise: 1,   // por cada ejercicio resuelto
+  perBotWin: 5,     // por cada victoria contra el bot
 };
 
 const ACHIEVEMENTS = [
-  { id:'ex_1',   icon:'🩷', name:'Primer paso',        desc:'Resolvé tu primer ejercicio',        reward:20,  check:s=>s.exercisesSolved>=1 },
-  { id:'ex_10',  icon:'🎯', name:'En marcha',          desc:'Resolvé 10 ejercicios',              reward:30,  check:s=>s.exercisesSolved>=10 },
-  { id:'ex_25',  icon:'⚔️', name:'Táctico',            desc:'Resolvé 25 ejercicios',              reward:60,  check:s=>s.exercisesSolved>=25 },
-  { id:'ex_50',  icon:'🧠', name:'Estratega',          desc:'Resolvé 50 ejercicios',              reward:120, check:s=>s.exercisesSolved>=50 },
-  { id:'ex_100', icon:'🏛️', name:'Maestro táctico',    desc:'Resolvé 100 ejercicios',             reward:250, check:s=>s.exercisesSolved>=100 },
-  { id:'streak_7',  icon:'🔥', name:'Constancia',      desc:'7 días seguidos de racha',           reward:50,  check:s=>s.streak>=7 },
-  { id:'streak_30', icon:'⭐', name:'Inquebrantable',  desc:'30 días seguidos de racha',          reward:300, check:s=>s.streak>=30 },
-  { id:'bot_1',  icon:'🤖', name:'Primera victoria',   desc:'Ganale una partida al bot',          reward:20,  check:s=>s.botWins>=1 },
-  { id:'bot_5',  icon:'⚡', name:'Cazador de bots',     desc:'Ganale 5 partidas al bot',           reward:75,  check:s=>s.botWins>=5 },
-  { id:'bot_20', icon:'👑', name:'Terror de silicio',  desc:'Ganale 20 partidas al bot',          reward:200, check:s=>s.botWins>=20 },
-  { id:'days_7', icon:'📅', name:'Alumno fiel',        desc:'Ingresá en 7 días distintos',        reward:40,  check:s=>s.daysLoggedIn>=7 },
-  { id:'days_30',icon:'🗓️', name:'Pilar de la academia',desc:'Ingresá en 30 días distintos',      reward:180, check:s=>s.daysLoggedIn>=30 },
+  { id:'ex_1',   icon:'🩷', name:'Primer paso',        desc:'Resolvé tu primer ejercicio',        reward:5,  check:s=>s.exercisesSolved>=1 },
+  { id:'ex_10',  icon:'🎯', name:'En marcha',          desc:'Resolvé 10 ejercicios',              reward:8,  check:s=>s.exercisesSolved>=10 },
+  { id:'ex_25',  icon:'⚔️', name:'Táctico',            desc:'Resolvé 25 ejercicios',              reward:12, check:s=>s.exercisesSolved>=25 },
+  { id:'ex_50',  icon:'🧠', name:'Estratega',          desc:'Resolvé 50 ejercicios',              reward:18, check:s=>s.exercisesSolved>=50 },
+  { id:'ex_100', icon:'🏛️', name:'Maestro táctico',    desc:'Resolvé 100 ejercicios',             reward:25, check:s=>s.exercisesSolved>=100 },
+  { id:'streak_7',  icon:'🔥', name:'Constancia',      desc:'7 días seguidos de racha',           reward:8,  check:s=>s.streak>=7 },
+  { id:'streak_30', icon:'⭐', name:'Inquebrantable',  desc:'30 días seguidos de racha',          reward:20, check:s=>s.streak>=30 },
+  { id:'bot_1',  icon:'🤖', name:'Primera victoria',   desc:'Ganale una partida al bot',          reward:5,  check:s=>s.botWins>=1 },
+  { id:'bot_5',  icon:'⚡', name:'Cazador de bots',     desc:'Ganale 5 partidas al bot',           reward:10, check:s=>s.botWins>=5 },
+  { id:'bot_20', icon:'👑', name:'Terror de silicio',  desc:'Ganale 20 partidas al bot',          reward:20, check:s=>s.botWins>=20 },
+  { id:'days_7', icon:'📅', name:'Alumno fiel',        desc:'Ingresá en 7 días distintos',        reward:8,  check:s=>s.daysLoggedIn>=7 },
+  { id:'days_30',icon:'🗓️', name:'Pilar de la academia',desc:'Ingresá en 30 días distintos',      reward:20, check:s=>s.daysLoggedIn>=30 },
 ];
 
 async function computeCoronaStats(userId){
