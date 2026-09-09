@@ -1622,6 +1622,11 @@ async function renderExerciseList(category,level,onlyPending){
   list.before(progressBar);
 
   const displayExs = onlyPending ? exs.filter(ex => !solvedIds.has(String(ex.id))) : exs;
+
+  // El número de cada ejercicio es su posición REAL dentro de todo el nivel
+  // (no la posición dentro del filtro), para que si el alumno ve solo los
+  // pendientes, el ejercicio que era "#20" siga mostrando "#20" y no "#1".
+  exs.forEach((ex, idx)=>{ ex._num = idx+1; ex._total = exs.length; });
   _currentExerciseList = displayExs;
 
   if(!displayExs.length){
@@ -1631,11 +1636,10 @@ async function renderExerciseList(category,level,onlyPending){
     return;
   }
 
-  displayExs.forEach((ex, idx)=>{
+  displayExs.forEach((ex)=>{
     const locked=ex.access==='premium'&&u.plan!=='premium';
     const solved=solvedIds.has(String(ex.id));
-    const num = idx + 1;
-    ex._num = num; ex._total = displayExs.length;
+    const num = ex._num;
     const flipped = ex.player_color === 'b';
     const card=document.createElement('div');
     card.className='exercise-card'+(locked?' locked':'');
@@ -2047,10 +2051,19 @@ async function solveExerciseComplete(){
   const existing=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
   if(!existing.length){await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});}
 
-  // Mostrar botón siguiente si hay un ejercicio siguiente
+  // Mostrar botón siguiente si hay un ejercicio siguiente dentro de la lista
+  // que el alumno estaba viendo (respeta el filtro de pendientes si estaba activo)
   const nextBtn = document.getElementById('next-ex-btn');
-  if(nextBtn && currentExercise._num && currentExercise._total){
-    if(currentExercise._num < currentExercise._total){
+  const listForNext = _currentExerciseList && _currentExerciseList.length ? _currentExerciseList : [];
+  const curIdxForNext = listForNext.findIndex(e=>String(e.id)===String(currentExercise.id));
+  const hasNext = curIdxForNext!==-1 && curIdxForNext+1 < listForNext.length;
+  if(nextBtn){
+    if(hasNext){
+      nextBtn.textContent = 'Siguiente ejercicio →';
+      nextBtn.style.background = 'linear-gradient(90deg,#1a3a5e,#2a5a8e)';
+      nextBtn.style.color = '#7ab8ff';
+      nextBtn.style.borderColor = '#3a7bc8';
+      nextBtn.onclick = () => goToNextExercise();
       nextBtn.style.display = 'block';
     } else {
       nextBtn.textContent = '¡Carpeta completada! 🏆 Volver';
@@ -2064,21 +2077,20 @@ async function solveExerciseComplete(){
 }
 
 function goToNextExercise(){
-  if(!currentExercise || !currentExercise._num) return;
+  if(!currentExercise) return;
   // Buscar el siguiente ejercicio dentro de la misma lista que se le mostró
-  // al alumno (respeta el filtro "Ejercicios que faltan realizar" si estaba activo)
+  // al alumno (respeta el filtro "Ejercicios que faltan realizar" si estaba
+  // activo). El número que se muestra ("Ejercicio N de M") es la posición
+  // real del ejercicio dentro de todo el nivel, ya la trae seteada.
   let exs = _currentExerciseList && _currentExerciseList.length ? _currentExerciseList : (()=>{
     let fallback = allExercises.filter(e=>(e.category||'General')===_currentCategory);
     if(_currentLevel) fallback = fallback.filter(e=>(e.level||'Intermedio')===_currentLevel);
+    fallback.forEach((e,i)=>{ if(!e._num){ e._num=i+1; e._total=fallback.length; } });
     return fallback;
   })();
-  const nextIdx = currentExercise._num; // _num es 1-based, entonces _num es el índice del siguiente
-  if(nextIdx < exs.length){
-    const nextEx = exs[nextIdx];
-    nextEx._num = nextIdx + 1;
-    nextEx._total = exs.length;
-    openExercise(nextEx);
-  }
+  const curIdx = exs.findIndex(e=>String(e.id)===String(currentExercise.id));
+  if(curIdx===-1 || curIdx+1>=exs.length) return;
+  openExercise(exs[curIdx+1]);
 }
 
 function showResultBanner(type){
