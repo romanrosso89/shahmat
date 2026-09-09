@@ -820,7 +820,23 @@
       </div>
     </div>
   <div id="tab-manage-ex" class="content" style="display:none">
-    <div class="admin-section"><h2>📚 Ejercicios cargados</h2><div id="admin-exercise-list"></div></div>
+    <div class="admin-section">
+      <h2>📚 Ejercicios cargados</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem">
+        <input type="text" id="admin-ex-search" placeholder="🔎 Buscar por título..." oninput="applyAdminExerciseFilters()" style="flex:2;min-width:160px">
+        <select id="admin-ex-category-filter" onchange="applyAdminExerciseFilters()" style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0.6rem 0.5rem;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.85rem">
+          <option value="">Todas las categorías</option>
+        </select>
+        <select id="admin-ex-level-filter" onchange="applyAdminExerciseFilters()" style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0.6rem 0.5rem;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.85rem">
+          <option value="">Todos los niveles</option>
+          <option value="Principiante">🟢 Fácil</option>
+          <option value="Intermedio">🟡 Medio</option>
+          <option value="Avanzado">🔴 Difícil</option>
+        </select>
+      </div>
+      <div id="admin-ex-count" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem"></div>
+      <div id="admin-exercise-list"></div>
+    </div>
   </div>
   <div id="tab-weekly-admin" class="content" style="display:none">
     <div class="admin-section">
@@ -2396,17 +2412,63 @@ async function importFromLichess(){
 
 
 // ── ADMIN EXERCISES ──────────────────────────────────────────
+let _adminExercises = [];
 async function renderAdminExercises(){
   const list=document.getElementById('admin-exercise-list');
   if(!list)return;
   list.innerHTML='<div class="loading"><span class="spinner"></span>Cargando...</div>';
-  const exercises=await dbGet('exercises','order=created_at.asc');
+  _adminExercises = await dbGet('exercises','order=created_at.asc');
+
+  // Poblar el filtro de categorías con lo que realmente hay cargado
+  const catSelect = document.getElementById('admin-ex-category-filter');
+  if(catSelect){
+    const prevValue = catSelect.value;
+    const cats = [...new Set(_adminExercises.map(e=>e.category||'General'))].sort();
+    catSelect.innerHTML = '<option value="">Todas las categorías</option>' +
+      cats.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">${c}</option>`).join('');
+    catSelect.value = cats.includes(prevValue) ? prevValue : '';
+  }
+
+  applyAdminExerciseFilters();
+}
+
+function applyAdminExerciseFilters(){
+  const list=document.getElementById('admin-exercise-list');
+  const countEl=document.getElementById('admin-ex-count');
+  if(!list)return;
+  const search = (document.getElementById('admin-ex-search')?.value||'').trim().toLowerCase();
+  const category = document.getElementById('admin-ex-category-filter')?.value||'';
+  const level = document.getElementById('admin-ex-level-filter')?.value||'';
+
+  let exs = _adminExercises.filter(ex=>{
+    if(search && !(ex.title||'').toLowerCase().includes(search)) return false;
+    if(category && (ex.category||'General')!==category) return false;
+    if(level && (ex.level||'Intermedio')!==level) return false;
+    return true;
+  });
+
+  if(countEl) countEl.textContent = `${exs.length} de ${_adminExercises.length} ejercicio${_adminExercises.length!==1?'s':''}`;
+
+  if(!exs.length){list.innerHTML='<div class="empty-state"><div class="icon">♟</div><p>No se encontraron ejercicios con esos filtros.</p></div>';return;}
+
+  list.className='exercise-grid';
   list.innerHTML='';
-  if(!exercises.length){list.innerHTML='<div class="empty-state"><div class="icon">♟</div><p>No hay ejercicios cargados.</p></div>';return;}
-  exercises.forEach(ex=>{
+  exs.forEach(ex=>{
+    const flipped = ex.player_color === 'b';
+    const miniBoard = renderMiniBoard(ex.fen, flipped);
     const card=document.createElement('div');
-    card.className='exercise-card';card.style.cssText='cursor:default';
-    card.innerHTML=`<div class="ex-info" style="flex:1"><div class="ex-title">${ex.title}</div><div class="ex-meta">${ex.level||'Intermedio'} · <span style="color:${ex.access==='premium'?'var(--gold)':'#7ab88a'}">${ex.access==='premium'?'★ PRO':'Gratuito'}</span></div></div><button class="btn-edit" onclick='openEditModal(${JSON.stringify(ex).replace(/'/g,"&#39;")})'  title="Editar">✏️</button><button onclick="deleteExercise('${ex.id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;padding:0.2rem">✕</button>`;
+    card.className='exercise-card';
+    card.style.cssText='cursor:default;position:relative';
+    card.innerHTML=`
+      ${miniBoard}
+      <div style="padding:0.4rem 0.5rem 0.2rem;font-weight:600;font-size:0.82rem;color:var(--cream);line-height:1.25">${ex.title}</div>
+      <div class="ex-card-footer" style="padding:0 0.5rem 0.5rem">
+        <span style="font-size:0.72rem;color:var(--muted)">${LEVEL_LABELS[ex.level]||ex.level||'Medio'} · ${ex.category||'General'}</span>
+      </div>
+      <div style="display:flex;gap:0.4rem;padding:0 0.5rem 0.5rem">
+        <button class="btn-edit" onclick='openEditModal(${JSON.stringify(ex).replace(/'/g,"&#39;")})' title="Editar" style="flex:1">✏️ Editar</button>
+        <button onclick="deleteExercise('${ex.id}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--danger);cursor:pointer;font-size:0.85rem;padding:0.3rem 0.5rem">✕</button>
+      </div>`;
     list.appendChild(card);
   });
 }
