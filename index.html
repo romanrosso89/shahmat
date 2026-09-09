@@ -835,6 +835,8 @@
         </select>
       </div>
       <div id="admin-ex-count" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem"></div>
+      <button class="btn" style="background:var(--surface2);border:1px solid var(--border);color:var(--cream);font-size:0.8rem;padding:0.5rem 0.9rem;margin-bottom:0.8rem" id="verify-mates-btn" onclick="verifyMateExercises()">🔍 Verificar ejercicios de mate</button>
+      <div id="verify-mates-results" style="display:none;margin-bottom:1rem"></div>
       <div id="admin-exercise-list"></div>
     </div>
   </div>
@@ -2477,6 +2479,68 @@ async function deleteExercise(id){
   if(!confirm('¿Eliminar este ejercicio?'))return;
   await dbDelete('exercises',id);
   renderAdminExercises();
+}
+
+// Revisa todos los ejercicios de categoría "Mate en N": que la secuencia de
+// solución guardada sea legal jugada por jugada, que termine realmente en
+// jaque mate, y que la cantidad de jugadas del alumno coincida con la "N"
+// de la categoría. Esto detecta ejercicios con datos corruptos/mal
+// importados (como el que reportó Román en "Mate en 3"), sin necesitar
+// acceso directo a la base.
+async function verifyMateExercises(){
+  const btn = document.getElementById('verify-mates-btn');
+  const resultsEl = document.getElementById('verify-mates-results');
+  if(!resultsEl) return;
+  if(btn) btn.disabled = true;
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Verificando...</div>';
+
+  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const mateExs = exercises.filter(ex => /^Mate en \d/.test(ex.category||''));
+  const problems = [];
+
+  mateExs.forEach(ex=>{
+    const m = (ex.category||'').match(/Mate en (\d+)/);
+    const expectedPlayerMoves = m ? parseInt(m[1]) : null;
+    const game = new Chess();
+    try{
+      if(!game.load(ex.fen)) throw new Error('bad fen');
+    }catch(e){ problems.push({ex, reason:'El FEN guardado no es válido.'}); return; }
+
+    const moves = (ex.solution||'').toLowerCase().trim().split(/\s+/).filter(s=>s.length>=4);
+    if(!moves.length){ problems.push({ex, reason:'No tiene jugadas de solución guardadas.'}); return; }
+
+    let reason = null;
+    for(let i=0;i<moves.length;i++){
+      const mv = moves[i];
+      const res = game.move({from:mv.slice(0,2), to:mv.slice(2,4), promotion:mv.length>4?mv[4]:'q'});
+      if(!res){ reason = `Jugada ilegal en el paso ${i+1} ("${mv}").`; break; }
+    }
+    if(!reason){
+      if(!game.in_checkmate()){
+        reason = 'La secuencia guardada no termina en jaque mate.';
+      } else if(expectedPlayerMoves){
+        const playerMovesPlayed = Math.ceil(moves.length/2);
+        if(playerMovesPlayed !== expectedPlayerMoves){
+          reason = `La categoría dice "Mate en ${expectedPlayerMoves}" pero la solución guardada tiene ${playerMovesPlayed} jugada(s) del alumno.`;
+        }
+      }
+    }
+    if(reason) problems.push({ex, reason});
+  });
+
+  if(btn) btn.disabled = false;
+  if(!problems.length){
+    resultsEl.innerHTML = `<div style="background:rgba(58,200,123,0.1);border:1px solid #3ac87b;border-radius:6px;padding:0.8rem 1rem;color:#7ab88a;font-size:0.85rem">✓ Se revisaron ${mateExs.length} ejercicios de "Mate en N" y todos están bien formados.</div>`;
+    return;
+  }
+  resultsEl.innerHTML = `<div style="background:rgba(230,80,80,0.08);border:1px solid var(--danger);border-radius:6px;padding:0.8rem 1rem">
+    <div style="color:var(--danger);font-weight:600;font-size:0.85rem;margin-bottom:0.6rem">⚠️ ${problems.length} de ${mateExs.length} ejercicios de "Mate en N" tienen un problema:</div>
+    ${problems.map(p=>`<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid var(--border)">
+      <strong>${p.ex.title||'(sin título)'}</strong> — <span style="color:var(--muted)">${p.ex.category}</span><br>
+      <span style="color:var(--danger)">${p.reason}</span>
+    </div>`).join('')}
+  </div>`;
 }
 
 async function addExercise(){
