@@ -1359,6 +1359,7 @@ function showTab(tabId, el) {
 function goBack(){showScreen(currentUser.role==='admin'?'screen-admin':'screen-student');}
 
 let allExercises = [];
+let _currentExerciseList = [];
 
 async function renderStudentView() {
   const u=currentUser;
@@ -1547,14 +1548,15 @@ function renderLevels(category){
   setTimeout(animateCards,50);
 }
 
-async function renderExerciseList(category,level){
+async function renderExerciseList(category,level,onlyPending){
+  onlyPending = !!onlyPending;
   _currentCategory = category; _currentLevel = level;
   if(!_blockPushState) history.pushState({page:'exercise-list',category,level},'');
   const u=currentUser;
   const list=document.getElementById('exercise-list');
   // Limpiar elementos anteriores
   let prevEl = list.previousElementSibling;
-  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar' || prevEl.dataset?.type==='level-filter')){
+  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar' || prevEl.dataset?.type==='level-filter' || prevEl.dataset?.type==='pending-toggle')){
     const toRemove = prevEl;
     prevEl = prevEl.previousElementSibling;
     toRemove.remove();
@@ -1575,12 +1577,19 @@ async function renderExerciseList(category,level){
   ];
   const filterBar=document.createElement('div');
   filterBar.dataset.type='level-filter';
-  filterBar.style.cssText='display:flex;gap:0.4rem;flex-wrap:nowrap;margin-bottom:0.8rem';
+  filterBar.style.cssText='display:flex;gap:0.4rem;flex-wrap:nowrap;margin-bottom:0.6rem';
   filterBar.innerHTML = LEVEL_FILTERS.map(f=>{
     const active = (f.key||null) === (level||null);
-    return `<span onclick="renderExerciseList('${category}', ${f.key?`'${f.key}'`:'null'})" style="cursor:pointer;flex:1;text-align:center;padding:0.35rem 0.4rem;border-radius:20px;font-size:0.78rem;font-weight:600;white-space:nowrap;border:1.5px solid ${active?'var(--gold)':'var(--border)'};color:${active?'var(--gold)':'var(--muted)'};background:${active?'rgba(201,168,76,0.12)':'var(--surface2)'}">${f.label}</span>`;
+    return `<span onclick="renderExerciseList('${category}', ${f.key?`'${f.key}'`:'null'}, ${onlyPending})" style="cursor:pointer;flex:1;text-align:center;padding:0.35rem 0.4rem;border-radius:20px;font-size:0.78rem;font-weight:600;white-space:nowrap;border:1.5px solid ${active?'var(--gold)':'var(--border)'};color:${active?'var(--gold)':'var(--muted)'};background:${active?'rgba(201,168,76,0.12)':'var(--surface2)'}">${f.label}</span>`;
   }).join('');
   newBc.after(filterBar);
+
+  // Botón para mostrar solo los ejercicios que le faltan resolver al alumno
+  const pendingBar=document.createElement('div');
+  pendingBar.dataset.type='pending-toggle';
+  pendingBar.style.cssText='margin-bottom:0.8rem';
+  pendingBar.innerHTML = `<span onclick="renderExerciseList('${category}', ${level?`'${level}'`:'null'}, ${!onlyPending})" style="cursor:pointer;display:inline-flex;align-items:center;gap:0.35rem;padding:0.4rem 0.8rem;border-radius:20px;font-size:0.78rem;font-weight:600;border:1.5px solid ${onlyPending?'var(--gold)':'var(--border)'};color:${onlyPending?'var(--gold)':'var(--muted)'};background:${onlyPending?'rgba(201,168,76,0.12)':'var(--surface2)'}">${onlyPending?'✓ ':'📋 '}Ejercicios que faltan realizar</span>`;
+  filterBar.after(pendingBar);
 
   let exs=allExercises.filter(e=>(e.category||'General')===category);
   if(level) exs=exs.filter(e=>(e.level||'Intermedio')===level);
@@ -1598,7 +1607,7 @@ async function renderExerciseList(category,level){
   const total = exs.length;
   const pct = total ? Math.round(solvedCount/total*100) : 0;
 
-  // Barra de progreso
+  // Barra de progreso (siempre sobre el total del nivel, no solo lo pendiente)
   const progressBar = document.createElement('div');
   progressBar.dataset.type = 'progress-bar';
   progressBar.style.cssText = 'margin-bottom:1rem';
@@ -1612,11 +1621,21 @@ async function renderExerciseList(category,level){
     </div>`;
   list.before(progressBar);
 
-  exs.forEach((ex, idx)=>{
+  const displayExs = onlyPending ? exs.filter(ex => !solvedIds.has(String(ex.id))) : exs;
+  _currentExerciseList = displayExs;
+
+  if(!displayExs.length){
+    list.innerHTML = onlyPending
+      ? '<div class="empty-state"><div class="icon">🎉</div><p>¡Ya resolviste todos los ejercicios de este nivel!</p></div>'
+      : '<div class="empty-state"><div class="icon">♟</div><p>No hay ejercicios en esta categoría.</p></div>';
+    return;
+  }
+
+  displayExs.forEach((ex, idx)=>{
     const locked=ex.access==='premium'&&u.plan!=='premium';
     const solved=solvedIds.has(String(ex.id));
     const num = idx + 1;
-    ex._num = num; ex._total = exs.length;
+    ex._num = num; ex._total = displayExs.length;
     const flipped = ex.player_color === 'b';
     const card=document.createElement('div');
     card.className='exercise-card'+(locked?' locked':'');
@@ -2046,11 +2065,13 @@ async function solveExerciseComplete(){
 
 function goToNextExercise(){
   if(!currentExercise || !currentExercise._num) return;
-  // Buscar el siguiente ejercicio en la lista actual
-  const category = _currentCategory;
-  const level = _currentLevel;
-  let exs = allExercises.filter(e=>(e.category||'General')===category);
-  if(level) exs = exs.filter(e=>(e.level||'Intermedio')===level);
+  // Buscar el siguiente ejercicio dentro de la misma lista que se le mostró
+  // al alumno (respeta el filtro "Ejercicios que faltan realizar" si estaba activo)
+  let exs = _currentExerciseList && _currentExerciseList.length ? _currentExerciseList : (()=>{
+    let fallback = allExercises.filter(e=>(e.category||'General')===_currentCategory);
+    if(_currentLevel) fallback = fallback.filter(e=>(e.level||'Intermedio')===_currentLevel);
+    return fallback;
+  })();
   const nextIdx = currentExercise._num; // _num es 1-based, entonces _num es el índice del siguiente
   if(nextIdx < exs.length){
     const nextEx = exs[nextIdx];
