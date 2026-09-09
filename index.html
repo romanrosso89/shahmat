@@ -899,11 +899,11 @@ const H = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, '
 const sbClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 // ── PIEZAS: varios modelos disponibles (mismos sets que usa Lichess) ──
 const PIECE_SETS = {
-  cburnett: { name:'Clásico (Cburnett)', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/cburnett/' },
-  merida:   { name:'Mérida', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/merida/' },
-  alpha:    { name:'Alpha', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/alpha/' },
-  staunty:  { name:'Staunty', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/staunty/' },
-  pirouetti:{ name:'Pirouetti', base:'https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/pirouetti/' },
+  cburnett: { name:'Clásico (Cburnett)', base:'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/cburnett/' },
+  merida:   { name:'Mérida', base:'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/merida/' },
+  alpha:    { name:'Alpha', base:'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/alpha/' },
+  staunty:  { name:'Staunty', base:'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/staunty/' },
+  pirouetti:{ name:'Pirouetti', base:'https://cdn.jsdelivr.net/gh/lichess-org/lila@master/public/piece/pirouetti/' },
 };
 function buildPieceImgs(setKey){
   const set = PIECE_SETS[setKey] || PIECE_SETS.cburnett;
@@ -924,6 +924,14 @@ const BOARD_THEMES = {
 };
 function getSavedPieceSet(){ return localStorage.getItem('shahmat_piece_set') || 'cburnett'; }
 function getSavedBoardTheme(){ return localStorage.getItem('shahmat_board_theme') || 'clasico'; }
+// Si por algún motivo falla la carga de una pieza desde el CDN principal,
+// probamos una vez con el mirror de GitHub antes de rendirnos (mejor que
+// mostrar el ícono de "imagen rota").
+function pieceImgFallback(img){
+  if(img.dataset.fallback){ img.style.display='none'; return; }
+  img.dataset.fallback='1';
+  img.src = img.src.replace('cdn.jsdelivr.net/gh/lichess-org/lila@master/', 'raw.githubusercontent.com/lichess-org/lila/master/');
+}
 let PIECE_IMGS = buildPieceImgs(getSavedPieceSet());
 function applyBoardTheme(themeKey){
   const t = BOARD_THEMES[themeKey] || BOARD_THEMES.clasico;
@@ -1724,7 +1732,7 @@ function renderMiniBoard(fen, flipped){
       const piece = board[boardR][boardC];
       html += `<div class="mini-sq ${isLight?'light':'dark'}">`;
       if(piece && PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]){
-        html += `<img src="${PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]}">`;
+        html += `<img src="${PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]}" onerror="pieceImgFallback(this)">`;
       }
       html += '</div>';
     }
@@ -1780,7 +1788,7 @@ function drawBoard(){
       if(possibleMoves.includes(sqName)){sq.classList.add('possible');if(piece)sq.classList.add('has-piece');}
       if(inCheck&&piece&&piece.type==='k'&&piece.color===chessGame.turn()){const ind=document.createElement('div');ind.className='check-indicator';sq.appendChild(ind);}
       if(piece&&PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]){
-        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];
+        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.onerror=function(){pieceImgFallback(img)};
         if(piece.color===chessGame.turn()&&piece.color===playerColor){
           img.style.cursor='grab';img.style.touchAction='none';
           img.addEventListener('pointerdown',(e)=>startPieceDrag(e,sqName,'main'));
@@ -1944,7 +1952,7 @@ function showPromotionPicker(color, callback){
     btn.onmouseenter=()=>{btn.style.borderColor='var(--gold)';};
     btn.onmouseleave=()=>{btn.style.borderColor='var(--border)';};
     const img = document.createElement('img');
-    img.src = PIECE_IMGS[key]; img.style.cssText='width:80%;height:80%;pointer-events:none';
+    img.src = PIECE_IMGS[key]; img.style.cssText='width:80%;height:80%;pointer-events:none'; img.onerror=function(){pieceImgFallback(img)};
     btn.appendChild(img);
     btn.onclick=()=>{ modal.style.display='none'; callback(p); };
     opts.appendChild(btn);
@@ -4360,7 +4368,7 @@ function drawLiveBoard(){
         sq.appendChild(fc);
       }
       if(piece&&PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]){
-        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.style.cssText='width:90%;height:90%;object-fit:contain';
+        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.onerror=function(){pieceImgFallback(img)};img.style.cssText='width:90%;height:90%;object-fit:contain';
         if(piece.color===liveChessGame.turn()&&piece.color===livePlayerColor&&!liveGameOver){
           img.style.cursor='grab';img.style.touchAction='none';
           img.addEventListener('pointerdown',(e)=>startPieceDrag(e,sqName,'live'));
@@ -5211,7 +5219,7 @@ function drawBotBoard(){
         sq.appendChild(fc);
       }
       if(piece&&PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type]){
-        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.style.cssText='width:90%;height:90%;object-fit:contain';
+        const img=document.createElement('img');img.src=PIECE_IMGS[piece.color==='w'?piece.type.toUpperCase():piece.type];img.onerror=function(){pieceImgFallback(img)};img.style.cssText='width:90%;height:90%;object-fit:contain';
         if(piece.color===botChessGame.turn()&&piece.color===botGamePlayerColor&&!botThinking&&!botTimeIsUp){
           img.style.cursor='grab';img.style.touchAction='none';
           img.addEventListener('pointerdown',(e)=>startPieceDrag(e,sqName,'bot'));
