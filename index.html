@@ -641,7 +641,7 @@
 
 <div id="screen-exercise" class="screen">
   <div class="topbar">
-    <button class="back-btn" onclick="history.back()">← Volver</button>
+    <button class="back-btn" onclick="exerciseScreenBack()">← Volver</button>
     <span class="topbar-title" id="ex-topbar-title">Ejercicio</span>
     <div></div>
   </div>
@@ -1008,6 +1008,17 @@ async function dbUpdate(table, id, data) {
   return body;
 }
 async function dbDelete(table, id) { await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {method:'DELETE',headers:H}); }
+async function dbRpc(fn, params) {
+  try{
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {method:'POST',headers:H,body:JSON.stringify(params||{})});
+    const body = await resp.json().catch(()=>null);
+    if(!resp.ok){
+      console.error('dbRpc fallo', fn, resp.status, body);
+      return { __error: true, status: resp.status, ...(body||{}) };
+    }
+    return body;
+  }catch(e){ return { __error:true, message:String(e) }; }
+}
 
 // ── Contraseñas: encriptado con clave única (salt) por usuario ──
 // Cada usuario tiene una "salt" (texto al azar) propia. La contraseña nunca se
@@ -2010,6 +2021,7 @@ async function checkAutoSolve(from,to){
   // coincida con la jugada exacta de la solución: puede haber más de una
   // forma de dar mate en esa posición, y todas son correctas.
   if(chessGame.in_checkmate()){
+    if(duelMode){ await handleDuelCorrectAnswer(); return; }
     currentExercise._moveIndex = solutionMoves.length;
     await solveExerciseComplete();
     return;
@@ -4002,6 +4014,7 @@ async function openLiveLobby(){
   liveLobbyChannel.on('broadcast', { event: 'challenge-cancel' }, ({payload}) => handleChallengeCancel(payload));
   liveLobbyChannel.on('broadcast', { event: 'challenge-response' }, ({payload}) => handleChallengeResponse(payload));
   liveLobbyChannel.on('broadcast', { event: 'game-start' }, ({payload}) => handleGameStart(payload));
+  liveLobbyChannel.on('broadcast', { event: 'duel-start' }, ({payload}) => handleDuelStart(payload));
 
   liveLobbyChannel.subscribe(async (status)=>{
     if(status === 'SUBSCRIBED'){
@@ -4057,7 +4070,8 @@ function renderLiveLobby(){
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;display:flex;align-items:center;gap:0.7rem">
           <div style="width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">${u.avatar||'♟'}</div>
           <div style="flex:1;font-size:0.9rem;color:var(--cream);font-weight:600">${u.name||'Alumno'}</div>
-          <button class="btn btn-add" style="padding:0.4rem 0.9rem;font-size:0.8rem" onclick='openChallengePicker(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>Desafiar</button>
+          <button class="btn btn-add" style="padding:0.4rem 0.7rem;font-size:0.75rem" onclick='openChallengePicker(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>Desafiar</button>
+          <button style="padding:0.4rem 0.6rem;font-size:0.75rem;background:var(--surface2);border:1px solid var(--gold);color:var(--gold);border-radius:5px;cursor:pointer;white-space:nowrap" onclick='sendDuelChallenge(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>⚔️ Duelo</button>
         </div>`;
     });
     html += `</div>`;
@@ -4144,20 +4158,43 @@ function cancelOutgoingChallenge(expired){
   if(expired){ showLiveToast(`${challengeTargetName} no respondió a tiempo.`); }
 }
 
+// ── Duelo de mates: desafío directo, sin elegir color ni ritmo de juego ──
+function sendDuelChallenge(targetId, targetName){
+  if(!liveLobbyChannel) return;
+  challengeTargetId = targetId;
+  challengeTargetName = targetName;
+  outgoingChallengeId = 'duel_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  liveLobbyChannel.send({
+    type: 'broadcast', event: 'challenge',
+    payload: { challengeId: outgoingChallengeId, toId: targetId, fromId: String(currentUser.id), fromName: currentUser.name, type:'duel' }
+  });
+  document.getElementById('outgoing-target-name').textContent = targetName;
+  document.getElementById('outgoing-challenge-modal').style.display = 'flex';
+  if(outgoingTimeout) clearTimeout(outgoingTimeout);
+  outgoingTimeout = setTimeout(()=>{
+    if(outgoingChallengeId){ cancelOutgoingChallenge(true); }
+  }, 30000);
+}
+
 function handleIncomingChallenge(payload){
   if(String(payload.toId) !== String(currentUser.id)) return;
-  if(liveGameId) return; // ya está jugando una partida, no se puede recibir otro desafío
+  if(liveGameId || duelMode) return; // ya está jugando algo, no se puede recibir otro desafío
   // Si ya hay un desafío entrante sin responder, el nuevo espera (nos quedamos con el primero)
   if(incomingChallenge) return;
   incomingChallenge = payload;
-  const tc = TIME_CONTROLS.find(t=>t.id===payload.tcId) || TIME_CONTROLS[0];
   document.getElementById('incoming-from-name').textContent = payload.fromName;
-  document.getElementById('incoming-tc-label').textContent = `Ritmo de juego: ${tc.label}`;
-  // El color que eligió el que desafía es SU color; a mí me toca el contrario.
-  const miColorTxt = payload.color==='w' ? 'Vos jugás con negras'
-    : payload.color==='b' ? 'Vos jugás con blancas'
-    : 'El color se sortea al azar';
-  document.getElementById('incoming-color-label').textContent = miColorTxt;
+  if(payload.type === 'duel'){
+    document.getElementById('incoming-tc-label').textContent = '⚔️ Duelo de mates — Mate en 1, al mejor de 5';
+    document.getElementById('incoming-color-label').textContent = 'El primero en encontrar el jaque mate gana la ronda.';
+  } else {
+    const tc = TIME_CONTROLS.find(t=>t.id===payload.tcId) || TIME_CONTROLS[0];
+    document.getElementById('incoming-tc-label').textContent = `Ritmo de juego: ${tc.label}`;
+    // El color que eligió el que desafía es SU color; a mí me toca el contrario.
+    const miColorTxt = payload.color==='w' ? 'Vos jugás con negras'
+      : payload.color==='b' ? 'Vos jugás con blancas'
+      : 'El color se sortea al azar';
+    document.getElementById('incoming-color-label').textContent = miColorTxt;
+  }
   document.getElementById('incoming-challenge-modal').style.display = 'flex';
 }
 
@@ -4180,6 +4217,35 @@ async function respondChallenge(accepted){
       type:'broadcast', event:'challenge-response',
       payload: { challengeId: ch.challengeId, toId: ch.fromId, fromId: String(currentUser.id), fromName: currentUser.name, accepted:false, tcId: ch.tcId }
     });
+    return;
+  }
+
+  if(ch.type === 'duel'){
+    const rounds = await pickVerifiedMateOneExercises(5);
+    if(rounds.length < 3){
+      alert('No hay suficientes ejercicios verificados de "Mate en 1" para armar un duelo. Avisale al profesor.');
+      return;
+    }
+    // Orden estable entre los dos (no importa quién desafió): el de menor id
+    // hace de "jugador 1". Solo se usa como orden interno, no afecta el juego.
+    const iAmP1 = String(currentUser.id) < String(ch.fromId);
+    const p1Id = iAmP1 ? String(currentUser.id) : String(ch.fromId);
+    const p1Name = iAmP1 ? currentUser.name : ch.fromName;
+    const p2Id = iAmP1 ? String(ch.fromId) : String(currentUser.id);
+    const p2Name = iAmP1 ? ch.fromName : currentUser.name;
+    const res = await dbInsert('mate_duels', {
+      player1_id: p1Id, player1_name: p1Name,
+      player2_id: p2Id, player2_name: p2Name,
+      rounds: rounds
+    });
+    if(!res || res.__error || !Array.isArray(res) || !res.length){
+      console.error('No se pudo crear el duelo:', res);
+      alert('No se pudo crear el duelo. Probá desafiar de nuevo en un momento.');
+      return;
+    }
+    const duelRowCreated = res[0];
+    liveLobbyChannel.send({ type:'broadcast', event:'duel-start', payload:{ duelId: duelRowCreated.id, toId: ch.fromId } });
+    enterMateDuel(duelRowCreated.id);
     return;
   }
 
@@ -4219,6 +4285,14 @@ function handleGameStart(payload){
   outgoingChallengeId = null;
   document.getElementById('outgoing-challenge-modal').style.display = 'none';
   enterLiveGame(payload.gameId);
+}
+
+function handleDuelStart(payload){
+  if(String(payload.toId) !== String(currentUser.id)) return;
+  if(outgoingTimeout){ clearTimeout(outgoingTimeout); outgoingTimeout = null; }
+  outgoingChallengeId = null;
+  document.getElementById('outgoing-challenge-modal').style.display = 'none';
+  enterMateDuel(payload.duelId);
 }
 
 function handleChallengeResponse(payload){
@@ -4623,6 +4697,257 @@ function leaveLiveGame(){
   document.getElementById('live-lobby-container').style.display = 'block';
   renderLiveLobby();
 }
+
+// ══════════════════════════════════════════════════════════
+// ── Duelo de mates: dos jugadores, la misma posición de "Mate en 1",
+// gana el que encuentra el jaque mate primero. Al mejor de 5.
+// Reutiliza el propio tablero de ejercicios (screen-exercise) en vez de
+// construir uno nuevo, así se aprovecha toda la lógica de click-to-move
+// y detección de jaque mate que ya está probada ahí.
+// ══════════════════════════════════════════════════════════
+let duelMode = false, duelId = null, duelRow = null, duelIsP1 = false;
+let duelChannel = null, duelPresenceChannel = null, duelEnteredAt = 0, duelDisconnectTimer = null;
+let _duelPlayingRound = 0;       // ronda (1-based) que tengo cargada en el tablero ahora
+let _duelResultShownForRound = 0; // para no mostrar el cartel de resultado dos veces
+
+async function pickVerifiedMateOneExercises(n){
+  const pool = (allExercises||[]).filter(e => /^Mate en 1\b/.test(e.category||''));
+  const shuffled = pool.slice().sort(()=>Math.random()-0.5);
+  const picked = [];
+  for(const ex of shuffled){
+    if(picked.length >= n) break;
+    let game;
+    try{ game = new Chess(); if(!game.load(ex.fen)) continue; }catch(e){ continue; }
+    const moves = (ex.solution||'').toLowerCase().trim().split(/\s+/).filter(s=>s.length>=4);
+    if(moves.length !== 1) continue; // un duelo de "mate en 1" necesita exactamente una jugada
+    const mv = moves[0];
+    const res = game.move({from:mv.slice(0,2), to:mv.slice(2,4), promotion:mv.length>4?mv[4]:'q'});
+    if(!res || !game.in_checkmate()) continue; // descarta ejercicios con datos corruptos
+    picked.push({ fen: ex.fen, title: ex.title || 'Mate en 1' });
+  }
+  return picked;
+}
+
+async function enterMateDuel(id){
+  duelId = id; duelMode = true; _duelPlayingRound = 0; _duelResultShownForRound = 0;
+  duelEnteredAt = Date.now();
+  const rows = await dbGet('mate_duels', `id=eq.${id}`);
+  if(!rows || !rows.length){ alert('No se pudo cargar el duelo.'); duelMode=false; return; }
+  duelRow = rows[0];
+  duelIsP1 = String(currentUser.id) === String(duelRow.player1_id);
+
+  if(duelChannel){ sbClient.removeChannel(duelChannel); }
+  duelChannel = sbClient.channel('mate-duel-'+id)
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'mate_duels', filter:`id=eq.${id}` }, (payload)=>{
+      onDuelRowChange(payload.new);
+    })
+    .subscribe();
+
+  if(duelPresenceChannel){ sbClient.removeChannel(duelPresenceChannel); }
+  duelPresenceChannel = sbClient.channel('mate-duel-presence-'+id, { config:{ presence:{ key:String(currentUser.id) } } });
+  duelPresenceChannel.on('presence', { event:'sync' }, ()=>{
+    if(Date.now() - duelEnteredAt < 5000) return; // margen inicial para que ambos se conecten
+    if(!duelRow || duelRow.status==='finished') return;
+    const state = duelPresenceChannel.presenceState();
+    const opponentId = duelIsP1 ? duelRow.player2_id : duelRow.player1_id;
+    const opponentPresent = !!state[String(opponentId)];
+    if(opponentPresent){
+      if(duelDisconnectTimer){ clearTimeout(duelDisconnectTimer); duelDisconnectTimer = null; }
+    } else if(!duelDisconnectTimer){
+      duelDisconnectTimer = setTimeout(()=>{ resolveDuelRoundByDisconnect(); }, 12000);
+    }
+  });
+  duelPresenceChannel.subscribe(async(status)=>{ if(status==='SUBSCRIBED'){ await duelPresenceChannel.track({id:currentUser.id}); } });
+
+  document.getElementById('live-lobby-container').style.display = 'none';
+  loadDuelRoundIntoScreen(duelRow);
+}
+
+function onDuelRowChange(row){
+  duelRow = row;
+  const playedIdx = _duelPlayingRound - 1;
+  if(playedIdx>=0 && row.rounds[playedIdx] && row.rounds[playedIdx].winner && _duelResultShownForRound !== _duelPlayingRound){
+    _duelResultShownForRound = _duelPlayingRound;
+    showDuelRoundResult(row, playedIdx);
+    return;
+  }
+  if(row.status==='finished' && _duelPlayingRound===0){ showDuelFinalResult(row); }
+}
+
+function loadDuelRoundIntoScreen(row){
+  if(row.status === 'finished'){ showDuelFinalResult(row); return; }
+  const idx = row.current_round - 1;
+  const round = row.rounds[idx];
+  if(!round) return;
+  _duelPlayingRound = row.current_round;
+
+  document.getElementById('ex-topbar-title').textContent = '⚔️ Duelo de mates';
+  const numBadge = document.getElementById('ex-num-badge');
+  if(numBadge) numBadge.textContent = `Ronda ${row.current_round} de 5`;
+  const myScore = duelIsP1 ? row.score1 : row.score2;
+  const oppScore = duelIsP1 ? row.score2 : row.score1;
+  const oppName = duelIsP1 ? row.player2_name : row.player1_name;
+  const detailTitle = document.getElementById('ex-detail-title');
+  if(detailTitle) detailTitle.textContent = `Vos ${myScore} — ${oppScore} ${oppName}`;
+  const detailDesc = document.getElementById('ex-detail-desc');
+  if(detailDesc) detailDesc.textContent = '¡El primero en encontrar el jaque mate gana la ronda!';
+  const colorBadge = document.getElementById('ex-color-badge');
+  if(colorBadge) colorBadge.innerHTML = '';
+  const solTextEl = document.getElementById('solution-text');
+  if(solTextEl){ solTextEl.textContent=''; solTextEl.style.display='none'; }
+
+  const nextBtn = document.getElementById('next-ex-btn');
+  if(nextBtn){ nextBtn.style.display='none'; nextBtn.disabled=false; nextBtn.onclick=null; }
+
+  openDuelRoundBoard(round.fen);
+  showScreen('screen-exercise');
+
+  const myKey = duelIsP1 ? 'p1_at' : 'p2_at';
+  if(round[myKey]) showDuelWaitingState(); // volviste de un refresh habiendo ya respondido
+}
+
+function openDuelRoundBoard(fen){
+  const activeColor = fen.trim().split(' ')[1]==='b' ? 'b' : 'w';
+  currentExercise = { id:'duel-round', fen, solution:'', player_color: activeColor };
+  currentExercise._moveIndex = 0;
+  boardFlipped = (activeColor === 'b');
+  renderBoard(fen);
+}
+
+function showDuelWaitingState(){
+  const btn = document.getElementById('next-ex-btn');
+  if(btn){
+    btn.style.display='block'; btn.disabled=true; btn.onclick=null;
+    btn.textContent = '⏳ ¡Encontraste el mate! Esperando al rival...';
+    btn.style.background='var(--surface2)'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)';
+  }
+}
+
+async function handleDuelCorrectAnswer(){
+  if(!duelMode || !duelRow) return;
+  const round = duelRow.rounds[duelRow.current_round-1];
+  const myKey = duelIsP1 ? 'p1_at' : 'p2_at';
+  if(round && round[myKey]) return; // ya se había registrado
+  showResultBanner('correct');
+  showDuelWaitingState();
+  const moveTxt = (lastMove && lastMove.from && lastMove.to) ? (lastMove.from+lastMove.to) : '';
+  const res = await dbRpc('submit_duel_answer', { p_duel_id: duelRow.id, p_round: duelRow.current_round, p_player: duelIsP1?1:2, p_move: moveTxt });
+  if(res && !res.__error){
+    duelRow = { ...duelRow, rounds: res };
+    maybeResolveDuelRound(duelRow);
+  }
+}
+
+async function maybeResolveDuelRound(row){
+  const idx = row.current_round - 1;
+  const round = row.rounds[idx];
+  if(!round || round.winner) return;
+  if(!(round.p1_at && round.p2_at)) return; // todavía falta uno de los dos
+  const diffMs = Math.abs(round.p1_at - round.p2_at) * 1000;
+  const winner = diffMs < 150 ? 'draw' : (round.p1_at < round.p2_at ? 'p1' : 'p2');
+  await writeDuelRoundResolution(row, idx, winner);
+}
+
+async function writeDuelRoundResolution(row, idx, winner){
+  if(row.rounds[idx].winner) return; // ya la resolvió el otro cliente (mismo resultado igual)
+  const rounds = row.rounds.map((r,i)=> i===idx ? {...r, winner} : r);
+  const score1 = row.score1 + (winner==='p1'?1:0);
+  const score2 = row.score2 + (winner==='p2'?1:0);
+  const nextRound = row.current_round + 1;
+  const matchDone = score1>=3 || score2>=3 || nextRound>5;
+  await dbUpdate('mate_duels', row.id, {
+    rounds, score1, score2,
+    current_round: matchDone ? row.current_round : nextRound,
+    status: matchDone ? 'finished' : 'active'
+  });
+}
+
+function resolveDuelRoundByDisconnect(){
+  duelDisconnectTimer = null;
+  if(!duelRow || duelRow.status==='finished') return;
+  const idx = duelRow.current_round - 1;
+  if(duelRow.rounds[idx] && duelRow.rounds[idx].winner) return;
+  const winner = duelIsP1 ? 'p1' : 'p2'; // el rival se desconectó, yo sigo acá y gano la ronda
+  writeDuelRoundResolution(duelRow, idx, winner);
+}
+
+function showDuelRoundResult(row, idx){
+  const round = row.rounds[idx];
+  const myWon = (duelIsP1 && round.winner==='p1') || (!duelIsP1 && round.winner==='p2');
+  const isDraw = round.winner==='draw';
+  const myScore = duelIsP1 ? row.score1 : row.score2;
+  const oppScore = duelIsP1 ? row.score2 : row.score1;
+  const oppName = duelIsP1 ? row.player2_name : row.player1_name;
+  const detailTitle = document.getElementById('ex-detail-title');
+  if(detailTitle) detailTitle.textContent = `Vos ${myScore} — ${oppScore} ${oppName}`;
+  const btn = document.getElementById('next-ex-btn');
+  if(btn){
+    btn.style.display='block'; btn.disabled=false;
+    btn.textContent = isDraw ? '🤝 Empate en esta ronda — Continuar' : myWon ? '🏆 ¡Ganaste la ronda! — Continuar' : '💔 Perdiste la ronda — Continuar';
+    btn.style.background = isDraw ? 'var(--surface2)' : myWon ? 'linear-gradient(90deg,#1a5e2e,#2a8e4a)' : 'linear-gradient(90deg,#5e1a1a,#8e2a2a)';
+    btn.style.color = isDraw ? 'var(--muted)' : '#fff';
+    btn.style.borderColor = isDraw ? 'var(--border)' : (myWon ? '#3ac86c' : '#c83a3a');
+    btn.onclick = () => { loadDuelRoundIntoScreen(duelRow); };
+  }
+  showResultBanner(myWon ? 'correct' : (isDraw ? 'correct' : 'incorrect'));
+}
+
+function showDuelFinalResult(row){
+  duelMode = false;
+  const myScore = duelIsP1 ? row.score1 : row.score2;
+  const oppScore = duelIsP1 ? row.score2 : row.score1;
+  const oppName = duelIsP1 ? row.player2_name : row.player1_name;
+  const myWon = myScore > oppScore;
+  const isTie = myScore === oppScore;
+  document.getElementById('ex-topbar-title').textContent = '⚔️ Duelo de mates';
+  const numBadge = document.getElementById('ex-num-badge');
+  if(numBadge) numBadge.textContent = '';
+  const detailTitle = document.getElementById('ex-detail-title');
+  if(detailTitle) detailTitle.textContent = isTie ? `¡Empate! ${myScore} — ${oppScore}` : (myWon ? `🏆 ¡Ganaste el duelo! ${myScore} — ${oppScore}` : `Perdiste el duelo ${myScore} — ${oppScore}`);
+  const detailDesc = document.getElementById('ex-detail-desc');
+  if(detailDesc) detailDesc.textContent = `vs ${oppName}`;
+  const boardEl = document.getElementById('chess-board');
+  if(boardEl) boardEl.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:2rem 0;font-size:3rem">${isTie?'🤝':myWon?'🏆':'😔'}</div>`;
+  const btn = document.getElementById('next-ex-btn');
+  if(btn){
+    btn.style.display='block'; btn.disabled=false;
+    btn.textContent = 'Volver a la sala';
+    btn.style.background='linear-gradient(90deg,#1a3a5e,#2a5a8e)'; btn.style.color='#7ab8ff'; btn.style.borderColor='#3a7bc8';
+    btn.onclick = () => leaveDuel();
+  }
+  cleanupDuelChannels();
+}
+
+function leaveDuel(){
+  if(duelMode && duelRow && duelRow.status!=='finished'){
+    // Abandono voluntario a mitad de ronda: el rival gana esa ronda.
+    const idx = duelRow.current_round - 1;
+    if(duelRow.rounds[idx] && !duelRow.rounds[idx].winner){
+      const winner = duelIsP1 ? 'p2' : 'p1';
+      writeDuelRoundResolution(duelRow, idx, winner);
+    }
+  }
+  duelMode = false; duelId = null; duelRow = null; _duelPlayingRound = 0; _duelResultShownForRound = 0;
+  cleanupDuelChannels();
+  showScreen('screen-student');
+  document.getElementById('live-lobby-container').style.display = 'block';
+  renderLiveLobby();
+}
+
+function cleanupDuelChannels(){
+  if(duelChannel){ sbClient.removeChannel(duelChannel); duelChannel = null; }
+  if(duelPresenceChannel){ sbClient.removeChannel(duelPresenceChannel); duelPresenceChannel = null; }
+  if(duelDisconnectTimer){ clearTimeout(duelDisconnectTimer); duelDisconnectTimer = null; }
+}
+
+function exerciseScreenBack(){
+  if(duelMode){
+    if(confirm('¿Abandonar el duelo? Se cuenta como derrota de esta ronda.')) leaveDuel();
+  } else {
+    history.back();
+  }
+}
+
 
 // ══════════════════════════════════════════════════════════
 // HISTORIAL DE PARTIDAS EN VIVO (con PGN para analizar)
