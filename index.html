@@ -1026,7 +1026,14 @@ async function hashPassword(password, salt){
 }
 
 async function openExercise(ex){
-  history.pushState({page:'exercise',exId:ex.id,category:_currentCategory,level:_currentLevel},'');
+  // Si ya estábamos en un ejercicio de esta misma categoría/nivel (por
+  // ejemplo, viniendo de "Siguiente ejercicio"), no apilamos una entrada de
+  // historial nueva por cada ejercicio — si no, después de resolver varios
+  // seguidos hay que apretar "atrás" una vez por cada uno para volver a la
+  // lista. Solo se agrega una entrada nueva al entrar desde la lista.
+  const onExercisePage = history.state && history.state.page==='exercise' && history.state.category===_currentCategory && history.state.level===_currentLevel;
+  if(onExercisePage) history.replaceState({page:'exercise',exId:ex.id,category:_currentCategory,level:_currentLevel},'');
+  else history.pushState({page:'exercise',exId:ex.id,category:_currentCategory,level:_currentLevel},'');
   currentExercise=ex;solutionVisible=false;
   currentExercise._moveIndex = 0;
   boardFlipped = (ex.player_color === 'b');
@@ -1559,7 +1566,16 @@ function renderLevels(category){
 async function renderExerciseList(category,level,onlyPending){
   onlyPending = !!onlyPending;
   _currentCategory = category; _currentLevel = level;
-  if(!_blockPushState) history.pushState({page:'exercise-list',category,level},'');
+  if(!_blockPushState){
+    // Cambiar de nivel (Fácil/Medio/Difícil) o tildar "faltan realizar" dentro
+    // de la MISMA categoría es un cambio de filtro, no una página nueva: si
+    // apilamos una entrada de historial por cada click, hay que apretar
+    // "atrás" muchas veces para salir de la lista. Solo agregamos una entrada
+    // nueva cuando realmente se entra a la categoría por primera vez.
+    const onSameListPage = history.state && history.state.page==='exercise-list' && history.state.category===category;
+    if(onSameListPage) history.replaceState({page:'exercise-list',category,level},'');
+    else history.pushState({page:'exercise-list',category,level},'');
+  }
   const u=currentUser;
   const list=document.getElementById('exercise-list');
   // Limpiar elementos anteriores
