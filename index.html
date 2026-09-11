@@ -4031,6 +4031,8 @@ async function openLiveLobby(){
 
 function leaveLiveLobby(){
   if(liveGameId){ leaveLiveGame(); }
+  if(duelMode){ leaveDuel(); }
+  liveMode = null;
   if(liveLobbyChannel){
     sbClient.removeChannel(liveLobbyChannel);
     liveLobbyChannel = null;
@@ -4043,19 +4045,40 @@ function leaveLiveLobby(){
   const cpm = document.getElementById('challenge-picker-modal'); if(cpm) cpm.style.display='none';
 }
 
+let liveMode = null; // null (eligiendo) | 'game' | 'duel'
+function selectLiveMode(mode){ liveMode = mode; renderLiveLobby(); }
+
 function renderLiveLobby(){
   const container = document.getElementById('live-lobby-container');
   if(!container) return;
 
+  if(!liveMode){
+    container.innerHTML = `
+      <div style="display:flex;gap:0.8rem;flex-wrap:wrap">
+        <div onclick="selectLiveMode('game')" style="flex:1;min-width:140px;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:1.6rem 1rem;text-align:center;cursor:pointer;transition:border-color 0.2s">
+          <div style="font-size:2.4rem;margin-bottom:0.6rem">♟️</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.05rem;color:var(--cream);font-weight:700;line-height:1.3">Jugar partida en vivo</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem">Partida clásica contra otro alumno, con reloj</div>
+        </div>
+        <div onclick="selectLiveMode('duel')" style="flex:1;min-width:140px;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:1.6rem 1rem;text-align:center;cursor:pointer;transition:border-color 0.2s">
+          <div style="font-size:2.4rem;margin-bottom:0.6rem">⚔️</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.05rem;color:var(--cream);font-weight:700;line-height:1.3">Match de mate en 1</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem">El primero en encontrar el mate gana la ronda — al mejor de 5</div>
+        </div>
+      </div>`;
+    return;
+  }
+
   const others = Object.values(liveOnlineUsers).filter(u => String(u.id) !== String(currentUser.id));
 
   let html = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:0.5rem">
-        <span style="width:9px;height:9px;border-radius:50%;background:#5ae89a;box-shadow:0 0 6px #5ae89a;display:inline-block"></span>
-        <span style="font-size:0.8rem;color:var(--muted)">Estás conectado — ${others.length} alumno${others.length!==1?'s':''} más en la sala</span>
-      </div>
-      <button onclick="openGameHistory()" style="background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:5px;cursor:pointer;white-space:nowrap">📜 Mis partidas</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.8rem;flex-wrap:wrap">
+      <span onclick="selectLiveMode(null)" style="cursor:pointer;color:var(--gold);font-size:0.8rem;font-weight:600">‹ Cambiar modo</span>
+      ${liveMode==='game' ? `<button onclick="openGameHistory()" style="background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:5px;cursor:pointer;white-space:nowrap">📜 Mis partidas</button>` : ''}
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+      <span style="width:9px;height:9px;border-radius:50%;background:#5ae89a;box-shadow:0 0 6px #5ae89a;display:inline-block"></span>
+      <span style="font-size:0.8rem;color:var(--muted)">${liveMode==='duel'?'⚔️ Match de mate en 1':'♟️ Partida en vivo'} — ${others.length} alumno${others.length!==1?'s':''} más en la sala</span>
     </div>`;
 
   if(!others.length){
@@ -4066,12 +4089,14 @@ function renderLiveLobby(){
   } else {
     html += `<div style="display:flex;flex-direction:column;gap:0.5rem">`;
     others.forEach(u=>{
+      const btn = liveMode==='duel'
+        ? `<button style="padding:0.4rem 0.8rem;font-size:0.8rem;background:var(--surface2);border:1px solid var(--gold);color:var(--gold);border-radius:5px;cursor:pointer;white-space:nowrap" onclick='sendDuelChallenge(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>⚔️ Retar</button>`
+        : `<button class="btn btn-add" style="padding:0.4rem 0.9rem;font-size:0.8rem" onclick='openChallengePicker(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>Desafiar</button>`;
       html += `
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;display:flex;align-items:center;gap:0.7rem">
           <div style="width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">${u.avatar||'♟'}</div>
           <div style="flex:1;font-size:0.9rem;color:var(--cream);font-weight:600">${u.name||'Alumno'}</div>
-          <button class="btn btn-add" style="padding:0.4rem 0.7rem;font-size:0.75rem" onclick='openChallengePicker(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>Desafiar</button>
-          <button style="padding:0.4rem 0.6rem;font-size:0.75rem;background:var(--surface2);border:1px solid var(--gold);color:var(--gold);border-radius:5px;cursor:pointer;white-space:nowrap" onclick='sendDuelChallenge(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name||"Alumno")})'>⚔️ Duelo</button>
+          ${btn}
         </div>`;
     });
     html += `</div>`;
