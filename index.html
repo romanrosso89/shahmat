@@ -835,8 +835,12 @@
         </select>
       </div>
       <div id="admin-ex-count" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem"></div>
-      <button class="btn" style="background:var(--surface2);border:1px solid var(--border);color:var(--cream);font-size:0.8rem;padding:0.5rem 0.9rem;margin-bottom:0.8rem" id="verify-mates-btn" onclick="verifyMateExercises()">🔍 Verificar ejercicios de mate</button>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.8rem">
+        <button class="btn" style="width:auto;background:var(--surface2);border:1px solid var(--border);color:var(--cream);font-size:0.8rem;padding:0.5rem 0.9rem;margin:0" id="verify-mates-btn" onclick="verifyMateExercises()">🔍 Verificar ejercicios de mate</button>
+        <button class="btn" style="width:auto;background:var(--surface2);border:1px solid var(--border);color:var(--cream);font-size:0.8rem;padding:0.5rem 0.9rem;margin:0" id="find-dup-btn" onclick="findDuplicateExercises()">🔁 Buscar duplicados</button>
+      </div>
       <div id="verify-mates-results" style="display:none;margin-bottom:1rem"></div>
+      <div id="dup-exercises-results" style="display:none;margin-bottom:1rem"></div>
       <div id="admin-exercise-list"></div>
     </div>
   </div>
@@ -1122,7 +1126,7 @@ async function doLogin() {
   try{ localStorage.setItem('shahmat_session', JSON.stringify({id:user.id})); }catch(e){}
   startSessionTracking();
   if (currentUser.role==='admin') { showScreen('screen-admin'); renderUsers(); }
-  else { showScreen('screen-student'); renderStudentView(); }
+  else { history.replaceState({page:'home'},''); showScreen('screen-student'); renderStudentView(); }
 }
 
 async function doRegister() {
@@ -1260,7 +1264,12 @@ function backToHome(){
 function showStudentSection(section){
   if(section!=='play-live') leaveLiveLobby();
   if(section!=='coordinates') stopCoordRound();
-  history.pushState({page:'student-section',section},'');
+  // Cambiar de pestaña (Ejercicios, Jugar en vivo, Perfil...) es un cambio de
+  // vista dentro del mismo "lugar", no una página nueva — si no, hay que
+  // apretar "atrás" una vez por cada pestaña visitada para volver al inicio.
+  const onSameSectionPage = history.state && history.state.page==='student-section';
+  if(onSameSectionPage) history.replaceState({page:'student-section',section},'');
+  else history.pushState({page:'student-section',section},'');
   document.getElementById('student-home').style.display='none';
   const sec = document.getElementById('student-section');
   sec.style.display='flex';
@@ -1742,6 +1751,9 @@ let lastMove = null;
 let initialFen = null;
 const FILES = ['a','b','c','d','e','f','g','h'];
 const LEVEL_LABELS = {Principiante:'Fácil', Intermedio:'Medio', Avanzado:'Difícil'};
+// Para comparar posiciones sin que el reloj de jugadas (halfmove/fullmove) o
+// detalles de enroque/al paso hagan parecer distintas dos posiciones iguales.
+function normalizeFenForDedup(fen){ return (fen||'').trim().split(' ').slice(0,2).join(' '); }
 
 function squareToCoords(sq){return {row:8-parseInt(sq[1]),col:FILES.indexOf(sq[0])};}
 function coordsToSquare(row,col){return FILES[col]+(8-row);}
@@ -2612,6 +2624,57 @@ async function verifyMateExercises(){
   </div>`;
 }
 
+// Agrupa TODOS los ejercicios cargados por posición (misma función de
+// normalización que usa la importación) y muestra los grupos con más de un
+// ejercicio, para poder revisar y borrar los repetidos/parecidos a mano.
+async function findDuplicateExercises(){
+  const btn = document.getElementById('find-dup-btn');
+  const resultsEl = document.getElementById('dup-exercises-results');
+  if(!resultsEl) return;
+  if(btn) btn.disabled = true;
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Buscando duplicados...</div>';
+
+  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const groups = {};
+  exercises.forEach(ex=>{
+    const key = normalizeFenForDedup(ex.fen);
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(ex);
+  });
+  const dupGroups = Object.values(groups).filter(g=>g.length>1).sort((a,b)=>b.length-a.length);
+
+  if(btn) btn.disabled = false;
+  if(!dupGroups.length){
+    resultsEl.innerHTML = `<div style="background:rgba(58,200,123,0.1);border:1px solid #3ac87b;border-radius:6px;padding:0.8rem 1rem;color:#7ab88a;font-size:0.85rem">✓ Revisamos ${exercises.length} ejercicios y no encontramos posiciones repetidas ni parecidas.</div>`;
+    return;
+  }
+  const totalRepetidos = dupGroups.reduce((sum,g)=>sum+g.length-1, 0);
+  resultsEl.innerHTML = `<div style="background:rgba(230,80,80,0.08);border:1px solid var(--danger);border-radius:6px;padding:0.8rem 1rem">
+    <div style="color:var(--danger);font-weight:600;font-size:0.85rem;margin-bottom:0.7rem">⚠️ ${dupGroups.length} posiciones tienen copias — ${totalRepetidos} ejercicio${totalRepetidos!==1?'s':''} de más para revisar</div>
+    ${dupGroups.map((g,gi)=>`
+      <div style="margin-bottom:0.8rem;padding-bottom:0.7rem;border-bottom:1px solid var(--border)">
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">Grupo ${gi+1} — ${g.length} copias de la misma posición</div>
+        ${g.map(ex=>`
+          <div id="dup-item-${ex.id}" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.82rem">
+            <span style="flex:1;color:var(--cream)">${ex.title||'(sin título)'} <span style="color:var(--muted)">— ${ex.category||'General'} · ${LEVEL_LABELS[ex.level]||ex.level||''}</span></span>
+            <button onclick="deleteDuplicateExercise('${ex.id}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--danger);cursor:pointer;font-size:0.78rem;padding:0.25rem 0.5rem;white-space:nowrap">✕ Borrar</button>
+          </div>`).join('')}
+      </div>`).join('')}
+  </div>`;
+}
+
+async function deleteDuplicateExercise(id){
+  if(!confirm('¿Borrar este ejercicio repetido?')) return;
+  await dbDelete('exercises', id);
+  const item = document.getElementById('dup-item-'+id);
+  if(item) item.remove();
+  if(_adminExercises && _adminExercises.length){
+    _adminExercises = _adminExercises.filter(e=>String(e.id)!==String(id));
+  }
+  renderAdminExercises();
+}
+
 async function addExercise(){
   const title=document.getElementById('ex-title-input').value.trim();
   const desc='Las blancas juegan y dan mate.';
@@ -2699,6 +2762,9 @@ async function importFromLichessWithToken(){
     if(rating <= 2000) return 'Intermedio';
     return 'Avanzado';
   }
+  // Para detectar posiciones repetidas o "prácticamente iguales" comparamos
+  // solo la ubicación de las piezas y de quién es el turno (normalizeFenForDedup,
+  // función compartida con el buscador de duplicados del panel de admin).
   const token = document.getElementById('lichess-token').value.trim();
   const catVal = document.getElementById('lichess-import-category').value;
   const level = document.getElementById('lichess-import-level').value;
@@ -2721,6 +2787,13 @@ async function importFromLichessWithToken(){
   const difficultyMap = {'Principiante':'easier','Intermedio':'normal','Avanzado':'harder'};
   const difficulty = difficultyMap[level] || 'normal';
   const seenIds = new Set();
+
+  status.textContent = `Revisando ejercicios ya cargados...`;
+  // Traemos las posiciones que YA existen en toda la base, para no repetir
+  // ni un ejercicio idéntico ni uno "prácticamente igual" a uno ya cargado
+  // (sea de esta categoría o de cualquier otra).
+  const existingRows = await dbGet('exercises', 'select=fen');
+  const existingPositions = new Set((existingRows||[]).map(e => normalizeFenForDedup(e.fen)));
 
   status.textContent = `Importando... 0/${qty} puzzles`;
 
@@ -2831,6 +2904,10 @@ async function importFromLichessWithToken(){
       if(fen==='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'){ replayFail++; continue; }
       const playerColor = fen.split(' ')[1]||'w';
 
+      // ¿Ya tenemos esta posición (o una prácticamente igual) cargada?
+      const dedupKey = normalizeFenForDedup(fen);
+      if(existingPositions.has(dedupKey)){ dupSkips++; continue; }
+
       // Verificacion final: reproducir toda la secuencia de solucion desde `fen` y confirmar
       // que es legal y, si el tema es de mate, que efectivamente termina en jaque mate.
       const verifyGame = new Chess(fen);
@@ -2862,6 +2939,7 @@ async function importFromLichessWithToken(){
         description:`Puzzle de Lichess. Rating: ${puzzle.rating}.`,
         fen, solution, level:nivelCalculado, category:categoryName, access, player_color:playerColor, video_url:null
       });
+      existingPositions.add(dedupKey); // para no repetirlo dentro de esta misma tanda
       imported++;
       status.textContent = `Importando... ${imported}/${qty} puzzles`;
     }
@@ -2870,7 +2948,7 @@ async function importFromLichessWithToken(){
   status.style.color = imported>0?'#7ab88a':'var(--danger)';
   const detalle = [];
   if(themeSkips>0) detalle.push(`${themeSkips} de otro tema`);
-  if(dupSkips>0) detalle.push(`${dupSkips} duplicados`);
+  if(dupSkips>0) detalle.push(`${dupSkips} repetidos/parecidos`);
   if(noPgn>0) detalle.push(`${noPgn} sin datos de partida`);
   if(replayFail>0) detalle.push(`${replayFail} error al reproducir PGN`);
   if(triggerFail>0) detalle.push(`${triggerFail} error en jugada del rival`);
@@ -2878,7 +2956,7 @@ async function importFromLichessWithToken(){
   if(networkErrors>0) detalle.push(`${networkErrors} error de red/CORS`);
   let diag = '';
   if(entriesFound < qty){ diag = ` [diagnóstico: la respuesta trajo ${entriesFound} puzzle(s), claves: ${responseKeys}]`; }
-  status.textContent = `[v7] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
+  status.textContent = `[v8] ✓ ${imported} puzzle${imported!==1?'s':''} importado${imported!==1?'s':''} en "${categoryName}"${detalle.length?' — saltados: '+detalle.join(', '):''}${diag}`;
   btn.disabled=false;
   if(imported>0) renderAdminExercises();
 }
@@ -3381,7 +3459,7 @@ async function restoreSession(){
   currentUser = user;
   startSessionTracking();
   if (currentUser.role==='admin') { showScreen('screen-admin'); renderUsers(); }
-  else { showScreen('screen-student'); renderStudentView(); }
+  else { history.replaceState({page:'home'},''); showScreen('screen-student'); renderStudentView(); }
 }
 
 window.addEventListener('DOMContentLoaded', function(){
