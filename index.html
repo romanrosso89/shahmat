@@ -1754,6 +1754,26 @@ const LEVEL_LABELS = {Principiante:'Fácil', Intermedio:'Medio', Avanzado:'Difí
 // Para comparar posiciones sin que el reloj de jugadas (halfmove/fullmove) o
 // detalles de enroque/al paso hagan parecer distintas dos posiciones iguales.
 function normalizeFenForDedup(fen){ return (fen||'').trim().split(' ').slice(0,2).join(' '); }
+// Refleja una posición cambiando blancas por negras (y volteando el tablero
+// 180°, que es lo que corresponde al reflejar los colores). Sirve para
+// detectar el mismo patrón táctico "espejado" al color contrario.
+function mirrorFenColor(fen){
+  const parts = (fen||'').trim().split(' ');
+  const placement = parts[0]||'';
+  const turn = parts[1]||'w';
+  const mirroredPlacement = placement.split('/').reverse().map(row =>
+    row.split('').map(ch => /[a-zA-Z]/.test(ch) ? (ch===ch.toLowerCase()?ch.toUpperCase():ch.toLowerCase()) : ch).join('')
+  ).join('/');
+  const mirroredTurn = turn==='w' ? 'b' : 'w';
+  return mirroredPlacement + ' ' + mirroredTurn;
+}
+// Clave única para agrupar: la misma para una posición y su reflejo de color,
+// así ambas cuentan como "la misma" a la hora de buscar duplicados.
+function canonicalFenKey(fen){
+  const normal = normalizeFenForDedup(fen);
+  const mirrored = mirrorFenColor(fen);
+  return normal < mirrored ? normal : mirrored;
+}
 
 function squareToCoords(sq){return {row:8-parseInt(sq[1]),col:FILES.indexOf(sq[0])};}
 function coordsToSquare(row,col){return FILES[col]+(8-row);}
@@ -2638,7 +2658,7 @@ async function findDuplicateExercises(){
   const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
   const groups = {};
   exercises.forEach(ex=>{
-    const key = normalizeFenForDedup(ex.fen);
+    const key = canonicalFenKey(ex.fen);
     if(!groups[key]) groups[key] = [];
     groups[key].push(ex);
   });
@@ -2793,7 +2813,7 @@ async function importFromLichessWithToken(){
   // ni un ejercicio idéntico ni uno "prácticamente igual" a uno ya cargado
   // (sea de esta categoría o de cualquier otra).
   const existingRows = await dbGet('exercises', 'select=fen');
-  const existingPositions = new Set((existingRows||[]).map(e => normalizeFenForDedup(e.fen)));
+  const existingPositions = new Set((existingRows||[]).map(e => canonicalFenKey(e.fen)));
 
   status.textContent = `Importando... 0/${qty} puzzles`;
 
@@ -2905,7 +2925,7 @@ async function importFromLichessWithToken(){
       const playerColor = fen.split(' ')[1]||'w';
 
       // ¿Ya tenemos esta posición (o una prácticamente igual) cargada?
-      const dedupKey = normalizeFenForDedup(fen);
+      const dedupKey = canonicalFenKey(fen);
       if(existingPositions.has(dedupKey)){ dupSkips++; continue; }
 
       // Verificacion final: reproducir toda la secuencia de solucion desde `fen` y confirmar
