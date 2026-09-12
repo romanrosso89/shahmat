@@ -1454,14 +1454,28 @@ const CATEGORY_ICONS = {
   'Sacrificio':'♙','Final':'♚','General':'♟'
 };
 
+// Antes de dibujar carpetas/niveles/lista de ejercicios, sacamos cualquier
+// resto de la pantalla anterior (breadcrumb, chips de nivel, botón de
+// pendientes, barra de progreso) que haya quedado pegado arriba de la lista
+// — si no, al volver con la flecha de atrás a una carpeta se ve superpuesto
+// con lo que había en la pantalla de la que veníamos.
+function _clearExerciseListSiblings(){
+  const list=document.getElementById('exercise-list');
+  let prevEl = list.previousElementSibling;
+  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar' || prevEl.dataset?.type==='level-filter' || prevEl.dataset?.type==='pending-toggle')){
+    const toRemove = prevEl;
+    prevEl = prevEl.previousElementSibling;
+    toRemove.remove();
+  }
+  return list;
+}
+
 function renderFolders() {
   if(!_blockPushState){
     if(history.state && history.state.page==='folders') history.replaceState({page:'folders'},'');
     else history.pushState({page:'folders'},'');
   }
-  const list=document.getElementById('exercise-list');
-  const bc=list.previousElementSibling;
-  if(bc && bc.className==='breadcrumb') bc.remove();
+  const list=_clearExerciseListSiblings();
   list.innerHTML='';
   list.className='folder-grid';
 
@@ -1509,9 +1523,7 @@ function renderMateFolder(){
     if(history.state && history.state.page==='mate-folder') history.replaceState({page:'mate-folder'},'');
     else history.pushState({page:'mate-folder'},'');
   }
-  const list=document.getElementById('exercise-list');
-  const bc=list.previousElementSibling;
-  if(bc && bc.className==='breadcrumb') bc.remove();
+  const list=_clearExerciseListSiblings();
   list.innerHTML='';
   list.className='folder-grid';
 
@@ -1549,9 +1561,7 @@ function renderLevels(category){
     if(history.state && history.state.page==='levels' && history.state.category===category) history.replaceState({page:'levels',category},'');
     else history.pushState({page:'levels',category},'');
   }
-  const list=document.getElementById('exercise-list');
-  const bc=list.previousElementSibling;
-  if(bc && bc.className==='breadcrumb') bc.remove();
+  const list=_clearExerciseListSiblings();
   list.innerHTML='';
   list.className='folder-grid';
 
@@ -1606,14 +1616,7 @@ async function renderExerciseList(category,level,onlyPending){
     else history.pushState({page:'exercise-list',category,level},'');
   }
   const u=currentUser;
-  const list=document.getElementById('exercise-list');
-  // Limpiar elementos anteriores
-  let prevEl = list.previousElementSibling;
-  while(prevEl && (prevEl.className==='breadcrumb' || prevEl.dataset?.type==='progress-bar' || prevEl.dataset?.type==='level-filter' || prevEl.dataset?.type==='pending-toggle')){
-    const toRemove = prevEl;
-    prevEl = prevEl.previousElementSibling;
-    toRemove.remove();
-  }
+  const list=_clearExerciseListSiblings();
   list.innerHTML='';
   list.className='exercise-grid';
 
@@ -1898,6 +1901,7 @@ function getSquareUnderPoint(x,y){
 function startPieceDrag(e, fromSquare, boardType){
   e.preventDefault();
   e.stopPropagation();
+  if(boardType==='main' && duelMode && duelBoardLocked) return; // ya jugaste tu intento de esta ronda
 
   // Seleccionar la pieza (misma lógica que un click simple)
   if(boardType==='main'){
@@ -1971,6 +1975,7 @@ document.addEventListener('pointercancel', onDragPointerUp);
 function handleSquareClick(sqName){
   if(suppressNextClick){suppressNextClick=false;return;}
   if(chessGame.game_over())return;
+  if(duelMode && duelBoardLocked) return; // ya jugaste tu intento de esta ronda (correcto o incorrecto)
   const board=chessGame.board();
   const {row,col}=squareToCoords(sqName);
   const piece=board[row][col];
@@ -2071,6 +2076,11 @@ async function checkAutoSolve(from,to){
   // Verificar la jugada del alumno contra la jugada esperada de la secuencia
   if(!expectedMove || moveMade !== expectedMove){
     showResultBanner('incorrect');
+    if(duelMode){
+      setTimeout(()=>{ chessGame.undo(); lastMove=null; selectedSquare=null; possibleMoves=[]; drawBoard(); }, 600);
+      await handleDuelWrongAnswer();
+      return;
+    }
     setTimeout(()=>{ chessGame.undo(); lastMove=null; selectedSquare=null; possibleMoves=[]; drawBoard(); }, 600);
     return;
   }
@@ -2544,6 +2554,24 @@ async function renderAdminExercises(){
   applyAdminExerciseFilters();
 }
 
+// Calcula, para cada ejercicio, el mismo número de referencia ("Ejercicio N
+// de M") que ve el alumno en la lista — posición dentro de su categoría+nivel,
+// ordenados por fecha de carga. Así, si un alumno reporta un problema con el
+// "ejercicio #20 de Mate en 2 Fácil", se puede encontrar ese mismo ejercicio
+// acá por el mismo número.
+function computeStudentFacingNumbers(allExs){
+  const groups = {};
+  allExs.forEach(ex=>{
+    const key = (ex.category||'General')+'|'+(ex.level||'Intermedio');
+    (groups[key]=groups[key]||[]).push(ex);
+  });
+  const map = {};
+  Object.values(groups).forEach(group=>{
+    group.forEach((ex,idx)=>{ map[ex.id] = { num: idx+1, total: group.length }; });
+  });
+  return map;
+}
+
 function applyAdminExerciseFilters(){
   const list=document.getElementById('admin-exercise-list');
   const countEl=document.getElementById('admin-ex-count');
@@ -2551,6 +2579,8 @@ function applyAdminExerciseFilters(){
   const search = (document.getElementById('admin-ex-search')?.value||'').trim().toLowerCase();
   const category = document.getElementById('admin-ex-category-filter')?.value||'';
   const level = document.getElementById('admin-ex-level-filter')?.value||'';
+
+  const numbering = computeStudentFacingNumbers(_adminExercises);
 
   let exs = _adminExercises.filter(ex=>{
     if(search && !(ex.title||'').toLowerCase().includes(search)) return false;
@@ -2568,14 +2598,15 @@ function applyAdminExerciseFilters(){
   exs.forEach(ex=>{
     const flipped = ex.player_color === 'b';
     const miniBoard = renderMiniBoard(ex.fen, flipped);
+    const numInfo = numbering[ex.id];
     const card=document.createElement('div');
     card.className='exercise-card';
     card.style.cssText='cursor:default;position:relative';
     card.innerHTML=`
       ${miniBoard}
-      <div style="padding:0.4rem 0.5rem 0.2rem;font-weight:600;font-size:0.82rem;color:var(--cream);line-height:1.25">${ex.title}</div>
+      <div style="padding:0.4rem 0.5rem 0.2rem;font-weight:600;font-size:0.82rem;color:var(--cream);line-height:1.25">${numInfo?`<span style="color:var(--gold)">#${numInfo.num}</span> · `:''}${ex.title}</div>
       <div class="ex-card-footer" style="padding:0 0.5rem 0.5rem">
-        <span style="font-size:0.72rem;color:var(--muted)">${LEVEL_LABELS[ex.level]||ex.level||'Medio'} · ${ex.category||'General'}</span>
+        <span style="font-size:0.72rem;color:var(--muted)">${LEVEL_LABELS[ex.level]||ex.level||'Medio'} · ${ex.category||'General'}${numInfo?` · ${numInfo.num} de ${numInfo.total}`:''}</span>
       </div>
       <div style="display:flex;gap:0.4rem;padding:0 0.5rem 0.5rem">
         <button class="btn-edit" onclick='openEditModal(${JSON.stringify(ex).replace(/'/g,"&#39;")})' title="Editar" style="flex:1">✏️ Editar</button>
@@ -2606,6 +2637,7 @@ async function verifyMateExercises(){
   resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Verificando...</div>';
 
   const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const numbering = computeStudentFacingNumbers(exercises);
   const mateExs = exercises.filter(ex => /^Mate en \d/.test(ex.category||''));
   const problems = [];
 
@@ -2647,7 +2679,7 @@ async function verifyMateExercises(){
   resultsEl.innerHTML = `<div style="background:rgba(230,80,80,0.08);border:1px solid var(--danger);border-radius:6px;padding:0.8rem 1rem">
     <div style="color:var(--danger);font-weight:600;font-size:0.85rem;margin-bottom:0.6rem">⚠️ ${problems.length} de ${mateExs.length} ejercicios de "Mate en N" tienen un problema:</div>
     ${problems.map(p=>`<div style="font-size:0.8rem;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid var(--border)">
-      <strong>${p.ex.title||'(sin título)'}</strong> — <span style="color:var(--muted)">${p.ex.category}</span><br>
+      <strong>${numbering[p.ex.id]?`#${numbering[p.ex.id].num} — `:''}${p.ex.title||'(sin título)'}</strong> — <span style="color:var(--muted)">${p.ex.category}</span><br>
       <span style="color:var(--danger)">${p.reason}</span>
     </div>`).join('')}
   </div>`;
@@ -2667,6 +2699,7 @@ async function findDuplicateExercises(){
   resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Buscando duplicados...</div>';
 
   const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const numbering = computeStudentFacingNumbers(exercises);
 
   // Unión de conjuntos: dos ejercicios quedan en el mismo grupo si coinciden
   // por posición inicial O por secuencia de solución (alcanza con una de las dos).
@@ -2720,7 +2753,7 @@ async function findDuplicateExercises(){
         <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">Grupo ${gi+1} — ${grp.items.length} copias (${grp.reason})</div>
         ${grp.items.map(ex=>`
           <div id="dup-item-${ex.id}" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.82rem">
-            <span style="flex:1;color:var(--cream)">${ex.title||'(sin título)'} <span style="color:var(--muted)">— ${ex.category||'General'} · ${LEVEL_LABELS[ex.level]||ex.level||''}</span></span>
+            <span style="flex:1;color:var(--cream)">${numbering[ex.id]?`#${numbering[ex.id].num} — `:''}${ex.title||'(sin título)'} <span style="color:var(--muted)">— ${ex.category||'General'} · ${LEVEL_LABELS[ex.level]||ex.level||''}</span></span>
             <button onclick="deleteDuplicateExercise('${ex.id}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--danger);cursor:pointer;font-size:0.78rem;padding:0.25rem 0.5rem;white-space:nowrap">✕ Borrar</button>
           </div>`).join('')}
       </div>`).join('')}
@@ -3626,9 +3659,7 @@ function renderFinales(){
     if(history.state && history.state.page==='finales') history.replaceState({page:'finales'},'');
     else history.pushState({page:'finales'},'');
   }
-  const list = document.getElementById('exercise-list');
-  const bc = list.previousElementSibling;
-  if(bc && bc.className==='breadcrumb') bc.remove();
+  const list = _clearExerciseListSiblings();
   list.innerHTML = '';
   list.className = 'folder-grid';
 
@@ -3655,9 +3686,7 @@ function renderFinales(){
 
 function renderFinalDetail(final){
   if(!_blockPushState) history.pushState({page:'final-detail', finalId: final.id},'');
-  const list = document.getElementById('exercise-list');
-  const bc = list.previousElementSibling;
-  if(bc && bc.className==='breadcrumb') bc.remove();
+  const list = _clearExerciseListSiblings();
   list.innerHTML = '';
   list.className = '';
 
@@ -4884,11 +4913,17 @@ let duelMode = false, duelId = null, duelRow = null, duelIsP1 = false;
 let duelChannel = null, duelPresenceChannel = null, duelEnteredAt = 0, duelDisconnectTimer = null;
 let _duelPlayingRound = 0;       // ronda (1-based) que tengo cargada en el tablero ahora
 let _duelResultShownForRound = 0; // para no mostrar el cartel de resultado dos veces
+let duelBoardLocked = false;      // true una vez que ya jugué mi intento de esta ronda (bien o mal)
+let duelRoundTimer = null;        // dispara la resolución por tiempo agotado
+let duelCountdownInterval = null; // actualiza el contador visible cada segundo
+let duelRoundDeadline = 0;
+const DUEL_ROUND_SECONDS = 30;
 
 async function pickVerifiedMateOneExercises(n){
   const pool = (allExercises||[]).filter(e => /^Mate en 1\b/.test(e.category||''));
   const shuffled = pool.slice().sort(()=>Math.random()-0.5);
   const picked = [];
+  const usedPositions = new Set();
   for(const ex of shuffled){
     if(picked.length >= n) break;
     let game;
@@ -4898,6 +4933,13 @@ async function pickVerifiedMateOneExercises(n){
     const mv = moves[0];
     const res = game.move({from:mv.slice(0,2), to:mv.slice(2,4), promotion:mv.length>4?mv[4]:'q'});
     if(!res || !game.in_checkmate()) continue; // descarta ejercicios con datos corruptos
+    // Que las 5 rondas del mismo match sean siempre posiciones distintas entre sí
+    // (en "mate en 1" la solución es una sola jugada, así que comparar solo la
+    // posición ya alcanza — comparar la jugada sola daría falsos positivos,
+    // ya que muchas posiciones distintas pueden compartir el mismo casillero final).
+    const posKey = canonicalFenKey(ex.fen);
+    if(usedPositions.has(posKey)) continue;
+    usedPositions.add(posKey);
     picked.push({ fen: ex.fen, title: ex.title || 'Mate en 1' });
   }
   return picked;
@@ -4943,6 +4985,7 @@ function onDuelRowChange(row){
   const playedIdx = _duelPlayingRound - 1;
   if(playedIdx>=0 && row.rounds[playedIdx] && row.rounds[playedIdx].winner && _duelResultShownForRound !== _duelPlayingRound){
     _duelResultShownForRound = _duelPlayingRound;
+    stopDuelRoundTimer();
     showDuelRoundResult(row, playedIdx);
     return;
   }
@@ -4950,11 +4993,13 @@ function onDuelRowChange(row){
 }
 
 function loadDuelRoundIntoScreen(row){
+  stopDuelRoundTimer();
   if(row.status === 'finished'){ showDuelFinalResult(row); return; }
   const idx = row.current_round - 1;
   const round = row.rounds[idx];
   if(!round) return;
   _duelPlayingRound = row.current_round;
+  duelBoardLocked = false;
 
   document.getElementById('ex-topbar-title').textContent = '⚔️ Duelo de mates';
   const numBadge = document.getElementById('ex-num-badge');
@@ -4965,9 +5010,7 @@ function loadDuelRoundIntoScreen(row){
   const detailTitle = document.getElementById('ex-detail-title');
   if(detailTitle) detailTitle.textContent = `Vos ${myScore} — ${oppScore} ${oppName}`;
   const detailDesc = document.getElementById('ex-detail-desc');
-  if(detailDesc) detailDesc.textContent = '¡El primero en encontrar el jaque mate gana la ronda!';
-  const colorBadge = document.getElementById('ex-color-badge');
-  if(colorBadge) colorBadge.innerHTML = '';
+  if(detailDesc) detailDesc.textContent = '¡El primero en encontrar el jaque mate gana la ronda! Si te equivocás, perdés tu turno.';
   const solTextEl = document.getElementById('solution-text');
   if(solTextEl){ solTextEl.textContent=''; solTextEl.style.display='none'; }
 
@@ -4978,7 +5021,10 @@ function loadDuelRoundIntoScreen(row){
   showScreen('screen-exercise');
 
   const myKey = duelIsP1 ? 'p1_at' : 'p2_at';
-  if(round[myKey]) showDuelWaitingState(); // volviste de un refresh habiendo ya respondido
+  const myFailKey = duelIsP1 ? 'p1_failed' : 'p2_failed';
+  if(round[myKey]) showDuelWaitingState(); // volviste de un refresh habiendo ya respondido bien
+  else if(round[myFailKey]) showDuelFailedState(); // volviste de un refresh habiendo ya fallado
+  else startDuelRoundTimer();
 }
 
 function openDuelRoundBoard(fen){
@@ -4987,6 +5033,29 @@ function openDuelRoundBoard(fen){
   currentExercise._moveIndex = 0;
   boardFlipped = (activeColor === 'b');
   renderBoard(fen);
+}
+
+function startDuelRoundTimer(){
+  stopDuelRoundTimer();
+  duelRoundDeadline = Date.now() + DUEL_ROUND_SECONDS*1000;
+  updateDuelCountdownDisplay();
+  duelCountdownInterval = setInterval(updateDuelCountdownDisplay, 1000);
+  duelRoundTimer = setTimeout(()=>{ resolveDuelRoundByTimeout(); }, DUEL_ROUND_SECONDS*1000 + 300);
+}
+
+function stopDuelRoundTimer(){
+  if(duelRoundTimer){ clearTimeout(duelRoundTimer); duelRoundTimer = null; }
+  if(duelCountdownInterval){ clearInterval(duelCountdownInterval); duelCountdownInterval = null; }
+  const badge = document.getElementById('ex-color-badge');
+  if(badge) badge.innerHTML = '';
+}
+
+function updateDuelCountdownDisplay(){
+  const badge = document.getElementById('ex-color-badge');
+  if(!badge) return;
+  const secsLeft = Math.max(0, Math.ceil((duelRoundDeadline - Date.now())/1000));
+  badge.innerHTML = `<span style="font-weight:700;color:${secsLeft<=10?'var(--danger)':'var(--gold)'}">⏱ ${secsLeft}s</span>`;
+  if(secsLeft<=0 && duelCountdownInterval){ clearInterval(duelCountdownInterval); duelCountdownInterval=null; }
 }
 
 function showDuelWaitingState(){
@@ -4998,11 +5067,24 @@ function showDuelWaitingState(){
   }
 }
 
+function showDuelFailedState(){
+  duelBoardLocked = true;
+  const btn = document.getElementById('next-ex-btn');
+  if(btn){
+    btn.style.display='block'; btn.disabled=true; btn.onclick=null;
+    btn.textContent = '❌ Jugada incorrecta — perdiste tu turno. Esperando al rival...';
+    btn.style.background='var(--surface2)'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)';
+  }
+}
+
 async function handleDuelCorrectAnswer(){
   if(!duelMode || !duelRow) return;
   const round = duelRow.rounds[duelRow.current_round-1];
   const myKey = duelIsP1 ? 'p1_at' : 'p2_at';
-  if(round && round[myKey]) return; // ya se había registrado
+  const myFailKey = duelIsP1 ? 'p1_failed' : 'p2_failed';
+  if(round && (round[myKey] || round[myFailKey])) return; // ya se había registrado (bien o mal)
+  duelBoardLocked = true;
+  stopDuelRoundTimer();
   showResultBanner('correct');
   showDuelWaitingState();
   const moveTxt = (lastMove && lastMove.from && lastMove.to) ? (lastMove.from+lastMove.to) : '';
@@ -5013,14 +5095,56 @@ async function handleDuelCorrectAnswer(){
   }
 }
 
+async function handleDuelWrongAnswer(){
+  if(!duelMode || !duelRow) return;
+  const round = duelRow.rounds[duelRow.current_round-1];
+  const myKey = duelIsP1 ? 'p1_at' : 'p2_at';
+  const myFailKey = duelIsP1 ? 'p1_failed' : 'p2_failed';
+  if(round && (round[myKey] || round[myFailKey])) return; // ya se había registrado (bien o mal)
+  stopDuelRoundTimer();
+  showDuelFailedState();
+  const res = await dbRpc('mark_duel_failed', { p_duel_id: duelRow.id, p_round: duelRow.current_round, p_player: duelIsP1?1:2 });
+  if(res && !res.__error){
+    duelRow = { ...duelRow, rounds: res };
+    maybeResolveDuelRound(duelRow);
+  }
+}
+
+// Devuelve 'p1'|'p2'|'draw' si la ronda ya se puede definir, o null si todavía
+// hay que esperar. Con treatUnfinishedAsFailed=true (cuando se acabó el
+// tiempo), a quien no acertó NI falló todavía se lo trata como que perdió su
+// oportunidad por no llegar a tiempo.
+function computeDuelRoundWinner(round, treatUnfinishedAsFailed){
+  const p1Answered = !!round.p1_at, p2Answered = !!round.p2_at;
+  const p1Done = p1Answered || round.p1_failed || treatUnfinishedAsFailed;
+  const p2Done = p2Answered || round.p2_failed || treatUnfinishedAsFailed;
+  if(!p1Done || !p2Done) return null;
+  if(p1Answered && p2Answered){
+    const diffMs = Math.abs(round.p1_at - round.p2_at) * 1000;
+    return diffMs < 150 ? 'draw' : (round.p1_at < round.p2_at ? 'p1' : 'p2');
+  }
+  if(p1Answered) return 'p1';
+  if(p2Answered) return 'p2';
+  return 'draw'; // nadie acertó (fallaron los dos, o se les acabó el tiempo a los dos)
+}
+
 async function maybeResolveDuelRound(row){
   const idx = row.current_round - 1;
   const round = row.rounds[idx];
   if(!round || round.winner) return;
-  if(!(round.p1_at && round.p2_at)) return; // todavía falta uno de los dos
-  const diffMs = Math.abs(round.p1_at - round.p2_at) * 1000;
-  const winner = diffMs < 150 ? 'draw' : (round.p1_at < round.p2_at ? 'p1' : 'p2');
+  const winner = computeDuelRoundWinner(round, false);
+  if(!winner) return; // todavía falta que alguno acierte, falle, o se acabe el tiempo
   await writeDuelRoundResolution(row, idx, winner);
+}
+
+function resolveDuelRoundByTimeout(){
+  duelRoundTimer = null;
+  if(!duelRow || duelRow.status==='finished') return;
+  const idx = duelRow.current_round - 1;
+  const round = duelRow.rounds[idx];
+  if(!round || round.winner) return;
+  const winner = computeDuelRoundWinner(round, true); // se acabó el tiempo: quien no llegó, pierde su turno
+  if(winner) writeDuelRoundResolution(duelRow, idx, winner);
 }
 
 async function writeDuelRoundResolution(row, idx, winner){
@@ -5047,6 +5171,7 @@ function resolveDuelRoundByDisconnect(){
 }
 
 function showDuelRoundResult(row, idx){
+  stopDuelRoundTimer();
   const round = row.rounds[idx];
   const myWon = (duelIsP1 && round.winner==='p1') || (!duelIsP1 && round.winner==='p2');
   const isDraw = round.winner==='draw';
@@ -5069,6 +5194,7 @@ function showDuelRoundResult(row, idx){
 
 function showDuelFinalResult(row){
   duelMode = false;
+  stopDuelRoundTimer();
   const myScore = duelIsP1 ? row.score1 : row.score2;
   const oppScore = duelIsP1 ? row.score2 : row.score1;
   const oppName = duelIsP1 ? row.player2_name : row.player1_name;
@@ -5094,6 +5220,7 @@ function showDuelFinalResult(row){
 }
 
 function leaveDuel(){
+  stopDuelRoundTimer();
   if(duelMode && duelRow && duelRow.status!=='finished'){
     // Abandono voluntario a mitad de ronda: el rival gana esa ronda.
     const idx = duelRow.current_round - 1;
