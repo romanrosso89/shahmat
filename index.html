@@ -1192,7 +1192,7 @@ window.addEventListener('popstate', function(e){
     _renderExerciseListNoHistory(state.category, state.level);
   } else if(state.page==='exercise-list'){
     showScreen('screen-student');
-    _renderFoldersNoHistory();
+    _renderExerciseListNoHistory(state.category, state.level);
   } else if(state.page==='mate-folder'){
     showScreen('screen-student');
     _blockPushState=true; renderMateFolder(); _blockPushState=false;
@@ -1202,17 +1202,17 @@ window.addEventListener('popstate', function(e){
     if(mateCats.includes(state.category)){
       _blockPushState=true; renderMateFolder(); _blockPushState=false;
     } else {
-      _renderFoldersNoHistory();
+      _blockPushState=true; renderLevels(state.category); _blockPushState=false;
     }
   } else if(state.page==='finales'){
     showScreen('screen-student');
-    _renderFoldersNoHistory();
+    _blockPushState=true; renderFinales(); _blockPushState=false;
   } else if(state.page==='final-detail'){
     showScreen('screen-student');
     _blockPushState = true; renderFinales(); _blockPushState = false;
   } else if(state.page==='folders'){
     showScreen('screen-student');
-    _backToHomeNoHistory();
+    _renderFoldersNoHistory();
   } else if(state.page==='student-section'){
     showScreen('screen-student');
     _backToHomeNoHistory();
@@ -1455,7 +1455,10 @@ const CATEGORY_ICONS = {
 };
 
 function renderFolders() {
-  if(!_blockPushState) history.pushState({page:'folders'},'');
+  if(!_blockPushState){
+    if(history.state && history.state.page==='folders') history.replaceState({page:'folders'},'');
+    else history.pushState({page:'folders'},'');
+  }
   const list=document.getElementById('exercise-list');
   const bc=list.previousElementSibling;
   if(bc && bc.className==='breadcrumb') bc.remove();
@@ -1502,7 +1505,10 @@ function renderFolders() {
 }
 
 function renderMateFolder(){
-  if(!_blockPushState) history.pushState({page:'mate-folder'},'');
+  if(!_blockPushState){
+    if(history.state && history.state.page==='mate-folder') history.replaceState({page:'mate-folder'},'');
+    else history.pushState({page:'mate-folder'},'');
+  }
   const list=document.getElementById('exercise-list');
   const bc=list.previousElementSibling;
   if(bc && bc.className==='breadcrumb') bc.remove();
@@ -1539,7 +1545,10 @@ function renderMateFolder(){
 }
 
 function renderLevels(category){
-  if(!_blockPushState) history.pushState({page:'levels',category},'');
+  if(!_blockPushState){
+    if(history.state && history.state.page==='levels' && history.state.category===category) history.replaceState({page:'levels',category},'');
+    else history.pushState({page:'levels',category},'');
+  }
   const list=document.getElementById('exercise-list');
   const bc=list.previousElementSibling;
   if(bc && bc.className==='breadcrumb') bc.remove();
@@ -3573,7 +3582,10 @@ const FINALES_LIST = [
 ];
 
 function renderFinales(){
-  if(!_blockPushState) history.pushState({page:'finales'},'');
+  if(!_blockPushState){
+    if(history.state && history.state.page==='finales') history.replaceState({page:'finales'},'');
+    else history.pushState({page:'finales'},'');
+  }
   const list = document.getElementById('exercise-list');
   const bc = list.previousElementSibling;
   if(bc && bc.className==='breadcrumb') bc.remove();
