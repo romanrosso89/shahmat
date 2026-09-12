@@ -2653,9 +2653,11 @@ async function verifyMateExercises(){
   </div>`;
 }
 
-// Agrupa TODOS los ejercicios cargados por posición (misma función de
-// normalización que usa la importación) y muestra los grupos con más de un
-// ejercicio, para poder revisar y borrar los repetidos/parecidos a mano.
+// Agrupa TODOS los ejercicios cargados que comparten la MISMA posición inicial
+// (mismo criterio que usa la importación) O la MISMA secuencia de jugadas de
+// solución (esto último agarra los casos de "arranca distinto pero el mate es
+// prácticamente el mismo"), y muestra los grupos con más de un ejercicio para
+// poder revisar y borrar a mano.
 async function findDuplicateExercises(){
   const btn = document.getElementById('find-dup-btn');
   const resultsEl = document.getElementById('dup-exercises-results');
@@ -2665,26 +2667,58 @@ async function findDuplicateExercises(){
   resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Buscando duplicados...</div>';
 
   const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
-  const groups = {};
+
+  // Unión de conjuntos: dos ejercicios quedan en el mismo grupo si coinciden
+  // por posición inicial O por secuencia de solución (alcanza con una de las dos).
+  const parent = {};
+  function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+  function union(a,b){ const ra=find(a), rb=find(b); if(ra!==rb) parent[ra]=rb; }
+  exercises.forEach(ex=>{ parent[ex.id]=ex.id; });
+
+  const reasonByPair = {}; // guarda por qué se emparejaron, para mostrarlo
+  const byPosKey = {}, bySolKey = {};
   exercises.forEach(ex=>{
-    const key = canonicalFenKey(ex.fen);
-    if(!groups[key]) groups[key] = [];
-    groups[key].push(ex);
+    const posKey = canonicalFenKey(ex.fen);
+    (byPosKey[posKey] = byPosKey[posKey]||[]).push(ex.id);
+    const solKey = (ex.solution||'').toLowerCase().trim().replace(/\s+/g,' ');
+    if(solKey.length>=4) (bySolKey[solKey] = bySolKey[solKey]||[]).push(ex.id);
   });
-  const dupGroups = Object.values(groups).filter(g=>g.length>1).sort((a,b)=>b.length-a.length);
+  const groupReason = {}; // id raíz -> 'posición' | 'secuencia de mate' | 'posición y secuencia'
+  Object.values(byPosKey).forEach(ids=>{
+    if(ids.length<2) return;
+    for(let i=1;i<ids.length;i++) union(ids[0], ids[i]);
+    const root = find(ids[0]);
+    groupReason[root] = groupReason[root]==='secuencia de mate' ? 'posición y secuencia de mate' : 'misma posición inicial';
+  });
+  Object.values(bySolKey).forEach(ids=>{
+    if(ids.length<2) return;
+    for(let i=1;i<ids.length;i++) union(ids[0], ids[i]);
+    const root = find(ids[0]);
+    groupReason[root] = groupReason[root]==='misma posición inicial' ? 'posición y secuencia de mate' : 'misma secuencia de mate';
+  });
+
+  const groupsMap = {};
+  exercises.forEach(ex=>{
+    const root = find(ex.id);
+    (groupsMap[root] = groupsMap[root]||[]).push(ex);
+  });
+  const dupGroups = Object.entries(groupsMap)
+    .filter(([root,g])=>g.length>1)
+    .map(([root,g])=>({ items:g, reason: groupReason[root] || 'parecidos' }))
+    .sort((a,b)=>b.items.length-a.items.length);
 
   if(btn) btn.disabled = false;
   if(!dupGroups.length){
-    resultsEl.innerHTML = `<div style="background:rgba(58,200,123,0.1);border:1px solid #3ac87b;border-radius:6px;padding:0.8rem 1rem;color:#7ab88a;font-size:0.85rem">✓ Revisamos ${exercises.length} ejercicios y no encontramos posiciones repetidas ni parecidas.</div>`;
+    resultsEl.innerHTML = `<div style="background:rgba(58,200,123,0.1);border:1px solid #3ac87b;border-radius:6px;padding:0.8rem 1rem;color:#7ab88a;font-size:0.85rem">✓ Revisamos ${exercises.length} ejercicios y no encontramos posiciones ni secuencias de mate repetidas.</div>`;
     return;
   }
-  const totalRepetidos = dupGroups.reduce((sum,g)=>sum+g.length-1, 0);
+  const totalRepetidos = dupGroups.reduce((sum,g)=>sum+g.items.length-1, 0);
   resultsEl.innerHTML = `<div style="background:rgba(230,80,80,0.08);border:1px solid var(--danger);border-radius:6px;padding:0.8rem 1rem">
-    <div style="color:var(--danger);font-weight:600;font-size:0.85rem;margin-bottom:0.7rem">⚠️ ${dupGroups.length} posiciones tienen copias — ${totalRepetidos} ejercicio${totalRepetidos!==1?'s':''} de más para revisar</div>
-    ${dupGroups.map((g,gi)=>`
+    <div style="color:var(--danger);font-weight:600;font-size:0.85rem;margin-bottom:0.7rem">⚠️ ${dupGroups.length} grupos con copias — ${totalRepetidos} ejercicio${totalRepetidos!==1?'s':''} de más para revisar</div>
+    ${dupGroups.map((grp,gi)=>`
       <div style="margin-bottom:0.8rem;padding-bottom:0.7rem;border-bottom:1px solid var(--border)">
-        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">Grupo ${gi+1} — ${g.length} copias de la misma posición</div>
-        ${g.map(ex=>`
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">Grupo ${gi+1} — ${grp.items.length} copias (${grp.reason})</div>
+        ${grp.items.map(ex=>`
           <div id="dup-item-${ex.id}" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.82rem">
             <span style="flex:1;color:var(--cream)">${ex.title||'(sin título)'} <span style="color:var(--muted)">— ${ex.category||'General'} · ${LEVEL_LABELS[ex.level]||ex.level||''}</span></span>
             <button onclick="deleteDuplicateExercise('${ex.id}')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--danger);cursor:pointer;font-size:0.78rem;padding:0.25rem 0.5rem;white-space:nowrap">✕ Borrar</button>
@@ -2788,7 +2822,7 @@ async function importFromLichessWithToken(){
   // si elige un grupo puntual, ese grupo se usa directamente para todos.
   function nivelSegunRating(rating){
     if(rating <= 1200) return 'Principiante';
-    if(rating <= 2000) return 'Intermedio';
+    if(rating <= 2200) return 'Intermedio';
     return 'Avanzado';
   }
   // Para detectar posiciones repetidas o "prácticamente iguales" comparamos
@@ -2818,11 +2852,12 @@ async function importFromLichessWithToken(){
   const seenIds = new Set();
 
   status.textContent = `Revisando ejercicios ya cargados...`;
-  // Traemos las posiciones que YA existen en toda la base, para no repetir
-  // ni un ejercicio idéntico ni uno "prácticamente igual" a uno ya cargado
-  // (sea de esta categoría o de cualquier otra).
-  const existingRows = await dbGet('exercises', 'select=fen');
+  // Traemos las posiciones Y las secuencias de solución que YA existen en toda
+  // la base, para no repetir ni un ejercicio idéntico, ni uno que arranca
+  // distinto pero termina en prácticamente la misma secuencia de mate.
+  const existingRows = await dbGet('exercises', 'select=fen,solution');
   const existingPositions = new Set((existingRows||[]).map(e => canonicalFenKey(e.fen)));
+  const existingSolutions = new Set((existingRows||[]).map(e => (e.solution||'').toLowerCase().trim().replace(/\s+/g,' ')).filter(s=>s.length>=4));
 
   status.textContent = `Importando... 0/${qty} puzzles`;
 
@@ -2936,6 +2971,10 @@ async function importFromLichessWithToken(){
       // ¿Ya tenemos esta posición (o una prácticamente igual) cargada?
       const dedupKey = canonicalFenKey(fen);
       if(existingPositions.has(dedupKey)){ dupSkips++; continue; }
+      // ¿Ya tenemos esta misma secuencia de jugadas de mate, aunque arranque
+      // de una posición distinta? (esto agarra los "casi el mismo mate")
+      const solKey = (solution||'').toLowerCase().trim().replace(/\s+/g,' ');
+      if(solKey.length>=4 && existingSolutions.has(solKey)){ dupSkips++; continue; }
 
       // Verificacion final: reproducir toda la secuencia de solucion desde `fen` y confirmar
       // que es legal y, si el tema es de mate, que efectivamente termina en jaque mate.
@@ -2969,6 +3008,7 @@ async function importFromLichessWithToken(){
         fen, solution, level:nivelCalculado, category:categoryName, access, player_color:playerColor, video_url:null
       });
       existingPositions.add(dedupKey); // para no repetirlo dentro de esta misma tanda
+      if(solKey.length>=4) existingSolutions.add(solKey);
       imported++;
       status.textContent = `Importando... ${imported}/${qty} puzzles`;
     }
