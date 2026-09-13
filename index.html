@@ -2136,7 +2136,16 @@ async function solveExerciseComplete(){
   const ind=document.getElementById('solved-indicator');
   if(ind)ind.innerHTML=`<span class="solved-badge">✓ Resuelto</span>`;
   const existing=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
-  if(!existing.length){await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});}
+  if(Array.isArray(existing) && !existing.length){
+    const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});
+    if(progRes && progRes.__error){
+      console.error('No se pudo guardar el progreso:', progRes);
+      alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
+    }
+  } else if(!Array.isArray(existing)){
+    console.error('No se pudo verificar el progreso existente:', existing);
+    alert('No se pudo guardar tu progreso de este ejercicio (no se pudo consultar la base). Avisale al profe.');
+  }
 
   // Mostrar botón siguiente si hay un ejercicio siguiente dentro de la lista
   // que el alumno estaba viendo (respeta el filtro de pendientes si estaba activo)
