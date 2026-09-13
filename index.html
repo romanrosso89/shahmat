@@ -2067,7 +2067,7 @@ async function checkAutoSolve(from,to){
   // coincida con la jugada exacta de la solución: puede haber más de una
   // forma de dar mate en esa posición, y todas son correctas.
   if(chessGame.in_checkmate()){
-    if(duelMode){ await handleDuelCorrectAnswer(); return; }
+    if(duelMode && duelRow){ await handleDuelCorrectAnswer(); return; }
     currentExercise._moveIndex = solutionMoves.length;
     await solveExerciseComplete();
     return;
