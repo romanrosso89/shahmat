@@ -987,6 +987,22 @@ let _currentProgressUserId = null, _currentProgressUserName = null;
 let _currentCategory = null, _currentLevel = null;
 
 async function dbGet(table, q='') { return (await fetch(`${SUPABASE_URL}/rest/v1/${table}?${q}`, {headers:H})).json(); }
+async function dbGetAll(table, q='') {
+  // Supabase devuelve como máximo 1000 filas por consulta: pedimos de a páginas
+  // hasta traer todo, para que ningún ejercicio ni progreso quede afuera.
+  const PAGE = 1000;
+  let all = [];
+  const hasOrder = /(^|&)order=/.test(q);
+  for(let page=0; page<60; page++){
+    const base = hasOrder ? q.replace(/(^|&)(order=[^&]*)/, '$1$2,id.asc') : q;
+    const qq = (base ? base+'&' : '') + (hasOrder ? '' : 'order=id.asc&') + `limit=${PAGE}&offset=${page*PAGE}`;
+    const rows = await dbGet(table, qq);
+    if(!Array.isArray(rows)) return page===0 ? rows : all;
+    all = all.concat(rows);
+    if(rows.length < PAGE) break;
+  }
+  return all;
+}
 async function dbInsert(table, data) {
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {method:'POST',headers:H,body:JSON.stringify(data)});
   const body = await resp.json().catch(()=>null);
@@ -1422,7 +1438,7 @@ async function renderStudentView() {
 
   // Cargar racha y mostrar badge
   try {
-    const prog = await dbGet('progress', `user_id=eq.${u.id}&order=created_at.asc`);
+    const prog = await dbGetAll('progress', `user_id=eq.${u.id}&order=created_at.asc`);
     const {current} = calcStreak(prog);
     const badge = document.getElementById('racha-badge');
     if(badge && current > 0){
@@ -1435,7 +1451,7 @@ async function renderStudentView() {
 
   const list=document.getElementById('exercise-list');
   list.innerHTML='<div class="loading"><span class="spinner"></span>Cargando...</div>';
-  allExercises = await dbGet('exercises','order=created_at.asc');
+  allExercises = await dbGetAll('exercises','order=created_at.asc');
   const homeExStat=document.getElementById('home-ex-stat');
   if(homeExStat) homeExStat.textContent=allExercises.length+' ejercicios disponibles';
   renderFolders();
@@ -1650,7 +1666,7 @@ async function renderExerciseList(category,level,onlyPending){
   // Obtener ejercicios resueltos por el alumno
   let solvedIds = new Set();
   try {
-    const prog = await dbGet('progress', `user_id=eq.${u.id}`);
+    const prog = await dbGetAll('progress', `user_id=eq.${u.id}`);
     if(Array.isArray(prog)) prog.forEach(p => solvedIds.add(String(p.exercise_id)));
   } catch(e){}
 
@@ -1730,7 +1746,7 @@ async function markSolved(){
   btn.textContent = '✓ ¡Resuelto!';
 
   // Check if already solved
-  const existing = await dbGet('progress', `user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
+  const existing = await dbGetAll('progress', `user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
   if(!existing.length){
     await dbInsert('progress', {
       user_id: currentUser.id,
@@ -2133,7 +2149,7 @@ async function solveExerciseComplete(){
   // ── Guardado del progreso + diagnóstico visible (temporal) ──
   let dbg = '';
   try{
-    const existing=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
+    const existing=await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
     if(Array.isArray(existing) && !existing.length){
       const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});
       if(progRes && progRes.__error){
@@ -2141,7 +2157,7 @@ async function solveExerciseComplete(){
         dbg = `❌ NO SE GUARDÓ. Código ${progRes.status}. ${progRes.message||''} ${progRes.details||''} ${progRes.hint||''}`;
         alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
       } else {
-        const check = await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
+        const check = await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
         dbg = (Array.isArray(check) && check.length) ? '✅ Progreso guardado.' : `⚠️ Se envió pero no se encuentra al releer. Respuesta: ${JSON.stringify(check).slice(0,150)}`;
       }
     } else if(Array.isArray(existing)){
@@ -2154,7 +2170,8 @@ async function solveExerciseComplete(){
   }catch(e){
     dbg = `❌ Error de conexión: ${e && e.message}`;
   }
-  dbg += ` [ej ${currentExercise.id}, usuario ${currentUser.id}]`;
+  try{ const _plain = await dbGet('progress',`user_id=eq.${currentUser.id}&select=exercise_id`); dbg += ` | Consulta simple devuelve ${Array.isArray(_plain)?_plain.length:'error'} filas.`; const _all = await dbGetAll('progress',`user_id=eq.${currentUser.id}&select=exercise_id`); dbg += ` Consulta completa: ${Array.isArray(_all)?_all.length:'error'}.`; }catch(e){}
+  dbg += ` [ej ${currentExercise.id}]`;
   let dbgEl = document.getElementById('save-debug');
   if(!dbgEl){
     dbgEl = document.createElement('div');
@@ -2256,7 +2273,7 @@ function formatTime(secs){if(!secs)return '—';const m=Math.floor(secs/60);cons
 
 async function checkIfSolved(exerciseId){
   if(!currentUser)return false;
-  const res=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${exerciseId}`);
+  const res=await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${exerciseId}`);
   return res.length>0?res[0]:null;
 }
 
@@ -2268,8 +2285,8 @@ function toggleSolution(){
 
 // ── PROFILE PROGRESS ─────────────────────────────────────────
 async function loadProfileProgress(){
-  const total=await dbGet('exercises','');
-  const solved=await dbGet('progress',`user_id=eq.${currentUser.id}`);
+  const total=await dbGetAll('exercises','');
+  const solved=await dbGetAll('progress',`user_id=eq.${currentUser.id}`);
   const totalCount=total.length;const solvedCount=solved.length;
   const avgTime=solvedCount?Math.round(solved.reduce((a,b)=>a+(b.time_seconds||0),0)/solvedCount):0;
   document.getElementById('profile-solved').textContent=solvedCount;
@@ -2326,8 +2343,8 @@ async function renderAdminStats(){
   globalEl.innerHTML='<div class="loading"><span class="spinner"></span>Cargando...</div>';
 
   const users=await dbGet('users','role=eq.student&order=name.asc');
-  const exercises=await dbGet('exercises','');
-  const allProgress=await dbGet('progress','');
+  const exercises=await dbGetAll('exercises','');
+  const allProgress=await dbGetAll('progress','');
   const totalEx=exercises.length;
 
   globalEl.innerHTML=`<div class="stat-card"><div class="stat-number">${users.length}</div><div class="stat-label">Alumnos</div></div><div class="stat-card"><div class="stat-number">${totalEx}</div><div class="stat-label">Ejercicios</div></div><div class="stat-card"><div class="stat-number">${allProgress.length}</div><div class="stat-label">Resoluciones</div></div>`;
@@ -2567,7 +2584,7 @@ async function renderAdminExercises(){
   const list=document.getElementById('admin-exercise-list');
   if(!list)return;
   list.innerHTML='<div class="loading"><span class="spinner"></span>Cargando...</div>';
-  _adminExercises = await dbGet('exercises','order=created_at.asc');
+  _adminExercises = await dbGetAll('exercises','order=created_at.asc');
 
   // Poblar el filtro de categorías con lo que realmente hay cargado
   const catSelect = document.getElementById('admin-ex-category-filter');
@@ -2664,7 +2681,7 @@ async function verifyMateExercises(){
   resultsEl.style.display = 'block';
   resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Verificando...</div>';
 
-  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGetAll('exercises','order=created_at.asc');
   const numbering = computeStudentFacingNumbers(exercises);
   const mateExs = exercises.filter(ex => /^Mate en \d/.test(ex.category||''));
   const problems = [];
@@ -2726,7 +2743,7 @@ async function findDuplicateExercises(){
   resultsEl.style.display = 'block';
   resultsEl.innerHTML = '<div class="loading"><span class="spinner"></span>Buscando duplicados...</div>';
 
-  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGet('exercises','order=created_at.asc');
+  const exercises = (_adminExercises && _adminExercises.length) ? _adminExercises : await dbGetAll('exercises','order=created_at.asc');
   const numbering = computeStudentFacingNumbers(exercises);
 
   // Unión de conjuntos: dos ejercicios quedan en el mismo grupo si coinciden
@@ -2916,7 +2933,7 @@ async function importFromLichessWithToken(){
   // Traemos las posiciones Y las secuencias de solución que YA existen en toda
   // la base, para no repetir ni un ejercicio idéntico, ni uno que arranca
   // distinto pero termina en prácticamente la misma secuencia de mate.
-  const existingRows = await dbGet('exercises', 'select=fen,solution');
+  const existingRows = await dbGetAll('exercises', 'select=fen,solution');
   const existingPositions = new Set((existingRows||[]).map(e => canonicalFenKey(e.fen)));
   const existingSolutions = new Set((existingRows||[]).map(e => (e.solution||'').toLowerCase().trim().replace(/\s+/g,' ')).filter(s=>s.length>=4));
 
@@ -3188,12 +3205,12 @@ async function selectAvatar(emoji){
 
 async function loadProfileStats(){
   try{
-    const prog=await dbGet('progress',`user_id=eq.${currentUser.id}&order=created_at.asc`);
+    const prog=await dbGetAll('progress',`user_id=eq.${currentUser.id}&order=created_at.asc`);
     const {current}=calcStreak(Array.isArray(prog)?prog:[]);
     const rachaEl=document.getElementById('profile-racha-stat');
     if(rachaEl)rachaEl.textContent=current>0?`🔥 ${current} día${current!==1?'s':''}`:'0 días';
 
-    const allProg=await dbGet('progress','select=user_id,exercise_id');
+    const allProg=await dbGetAll('progress','select=user_id,exercise_id');
     const exCatMap={};
     (allExercises||[]).forEach(ex=>{exCatMap[ex.id]=ex.category;});
     const pts={};
@@ -3268,7 +3285,7 @@ async function renderUsers(){
   listEl.innerHTML = '<div class="loading"><span class="spinner"></span>Cargando...</div>';
 
   const users = await dbGet('users', 'role=eq.student&order=name.asc');
-  const allProgress = await dbGet('progress', '');
+  const allProgress = await dbGetAll('progress', '');
   const totalEx = allExercises ? allExercises.length : 0;
 
   if(!users.length){
@@ -3365,8 +3382,8 @@ async function viewStudentProgress(userId, userName){
 
   const [userRows, prog, allProgressForRanking, allStudents] = await Promise.all([
     dbGet('users', `id=eq.${userId}`),
-    dbGet('progress', `user_id=eq.${userId}`),
-    dbGet('progress', 'select=user_id,exercise_id'),
+    dbGetAll('progress', `user_id=eq.${userId}`),
+    dbGetAll('progress', 'select=user_id,exercise_id'),
     dbGet('users', 'select=id,name&role=eq.student')
   ]);
   const userRow = (userRows && userRows[0]) || {};
@@ -3469,7 +3486,7 @@ async function openMonthlyReport(){
   const monthLabel = `${MESES_ES[now.getMonth()]} de ${now.getFullYear()}`;
 
   const [prog, stats] = await Promise.all([
-    dbGet('progress', `user_id=eq.${userId}`),
+    dbGetAll('progress', `user_id=eq.${userId}`),
     computeCoronaStats(userId)
   ]);
 
@@ -6011,7 +6028,7 @@ async function loadRacha(){
 
   let progress = [];
   try {
-    progress = await dbGet('progress', `user_id=eq.${currentUser.id}&order=created_at.asc`);
+    progress = await dbGetAll('progress', `user_id=eq.${currentUser.id}&order=created_at.asc`);
   } catch(e){ progress = []; }
 
   const {current, record, activeDays} = calcStreak(progress);
@@ -6083,7 +6100,7 @@ const ACHIEVEMENTS = [
 
 async function computeCoronaStats(userId){
   let progress = [], sessions = [];
-  try { progress = await dbGet('progress', `user_id=eq.${userId}&order=created_at.asc`); } catch(e){}
+  try { progress = await dbGetAll('progress', `user_id=eq.${userId}&order=created_at.asc`); } catch(e){}
   try { sessions = await dbGet('sessions', `user_id=eq.${userId}`); } catch(e){}
 
   const exercisesSolved = new Set(progress.map(p=>String(p.exercise_id))).size;
@@ -6177,10 +6194,10 @@ async function loadRanking(){
     users = await dbGet('users', 'select=id,name,hidden&role=eq.student');
   } catch(e){ users = []; }
   try {
-    progress = await dbGet('progress', 'select=user_id,exercise_id,created_at');
+    progress = await dbGetAll('progress', 'select=user_id,exercise_id,created_at');
   } catch(e){ progress = []; }
   try {
-    exercises = allExercises && allExercises.length ? allExercises : await dbGet('exercises','select=id,category');
+    exercises = allExercises && allExercises.length ? allExercises : await dbGetAll('exercises','select=id,category');
   } catch(e){ exercises = []; }
 
   // Las cuentas de prueba del profesor no cuentan para el ranking
