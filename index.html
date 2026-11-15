@@ -438,7 +438,7 @@
   </div>
   <div id="student-home" class="home-screen">
     <div class="home-welcome">
-      <h2 id="home-greeting">¡Bienvenido! <span class="racha-badge" id="racha-badge"></span> <span class="corona-badge" id="corona-badge"></span></h2>
+      <h2 id="home-greeting">¡Bienvenido! <span class="racha-badge" id="racha-badge"></span></h2>
       <p id="home-subtitle">¿Qué querés hacer hoy?</p>
     </div>
     <div class="home-cards">
@@ -477,12 +477,6 @@
         <div class="home-card-title">Mi cuenta</div>
         <div class="home-card-desc">Datos y plan actual</div>
         <div class="home-card-stat" id="home-plan-stat">—</div>
-      </div>
-      <div class="home-card card-logros full-width" onclick="showStudentSection('achievements')">
-        <div class="home-card-icon">👑</div>
-        <div class="home-card-title">Coronas y logros</div>
-        <div class="home-card-desc">Sumá coronas jugando, resolviendo ejercicios y ganándole al bot</div>
-        <div class="home-card-stat" id="home-coronas-stat">Tocá para ver</div>
       </div>
       <div class="home-card card-evento full-width" id="home-card-evento" onclick="showStudentSection('weekly-event')">
         <div class="home-card-icon">🏆</div>
@@ -3392,10 +3386,6 @@ async function viewStudentProgress(userId, userName){
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-bottom:1.2rem">
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:0.6rem;text-align:center">
-        <div style="font-size:1.2rem;font-weight:700;color:var(--gold)">👑 ${stats.totalCoronas}</div>
-        <div style="font-size:0.65rem;color:var(--muted);text-transform:uppercase">Coronas</div>
-      </div>
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:0.6rem;text-align:center">
         <div style="font-size:1.2rem;font-weight:700;color:#e08080">🔥 ${stats.streak}</div>
         <div style="font-size:0.65rem;color:var(--muted);text-transform:uppercase">Racha actual</div>
       </div>
@@ -3416,15 +3406,6 @@ async function viewStudentProgress(userId, userName){
         <div style="font-size:0.65rem;color:var(--muted);text-transform:uppercase">Días activo</div>
       </div>
     </div>`;
-
-  if(stats.unlocked && stats.unlocked.length){
-    html += `<div style="margin-bottom:1.2rem">
-      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem">Logros desbloqueados (${stats.unlocked.length}/${ACHIEVEMENTS.length})</div>
-      <div style="display:flex;flex-wrap:wrap;gap:0.4rem">
-        ${stats.unlocked.map(a=>`<span title="${a.name}: ${a.desc}" style="font-size:1.1rem;width:32px;height:32px;border-radius:50%;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.4);display:flex;align-items:center;justify-content:center">${a.icon}</span>`).join('')}
-      </div>
-    </div>`;
-  }
 
   html += `<div style="font-size:0.85rem;color:var(--gold);font-weight:600;margin-bottom:1rem">Ejercicios: ${totalSolved} / ${allExercises.length} resueltos</div>`;
 
@@ -3486,7 +3467,6 @@ async function openMonthlyReport(){
 ✅ Ejercicios resueltos este mes: ${totalMes}${catLines ? '\n'+catLines : ''}
 
 🔥 Racha actual: ${stats.streak} día${stats.streak!==1?'s':''}
-👑 Coronas totales: ${stats.totalCoronas}
 📚 Ejercicios resueltos en total: ${stats.exercisesSolved}
 🤖 Victorias contra el bot: ${stats.botWins}
 
