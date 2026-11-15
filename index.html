@@ -1035,6 +1035,7 @@ async function hashPassword(password, salt){
 }
 
 async function openExercise(ex){
+  { const _d=document.getElementById('save-debug'); if(_d) _d.remove(); }
   // Si ya estábamos en un ejercicio de esta misma categoría/nivel (por
   // ejemplo, viniendo de "Siguiente ejercicio"), no apilamos una entrada de
   // historial nueva por cada ejercicio — si no, después de resolver varios
@@ -2129,17 +2130,41 @@ async function solveExerciseComplete(){
   if(statusEl){statusEl.textContent='♛ ¡Ejercicio completado!';statusEl.style.cssText='display:block;text-align:center;padding:0.8rem;background:rgba(90,138,106,0.2);border:1px solid rgba(90,138,106,0.4);border-radius:3px;color:#7ab88a;font-weight:600;font-size:1rem;margin-top:0.5rem';}
   const ind=document.getElementById('solved-indicator');
   if(ind)ind.innerHTML=`<span class="solved-badge">✓ Resuelto</span>`;
-  const existing=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
-  if(Array.isArray(existing) && !existing.length){
-    const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});
-    if(progRes && progRes.__error){
-      console.error('No se pudo guardar el progreso:', progRes);
-      alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
+  // ── Guardado del progreso + diagnóstico visible (temporal) ──
+  let dbg = '';
+  try{
+    const existing=await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
+    if(Array.isArray(existing) && !existing.length){
+      const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});
+      if(progRes && progRes.__error){
+        console.error('No se pudo guardar el progreso:', progRes);
+        dbg = `❌ NO SE GUARDÓ. Código ${progRes.status}. ${progRes.message||''} ${progRes.details||''} ${progRes.hint||''}`;
+        alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
+      } else {
+        const check = await dbGet('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
+        dbg = (Array.isArray(check) && check.length) ? '✅ Progreso guardado.' : `⚠️ Se envió pero no se encuentra al releer. Respuesta: ${JSON.stringify(check).slice(0,150)}`;
+      }
+    } else if(Array.isArray(existing)){
+      dbg = `ℹ️ Ya estaba guardado como resuelto (fila ${existing[0] && existing[0].id}).`;
+    } else {
+      console.error('No se pudo verificar el progreso existente:', existing);
+      dbg = `❌ No se pudo consultar la base: ${JSON.stringify(existing).slice(0,200)}`;
+      alert('No se pudo guardar tu progreso de este ejercicio (no se pudo consultar la base). Avisale al profe.');
     }
-  } else if(!Array.isArray(existing)){
-    console.error('No se pudo verificar el progreso existente:', existing);
-    alert('No se pudo guardar tu progreso de este ejercicio (no se pudo consultar la base). Avisale al profe.');
+  }catch(e){
+    dbg = `❌ Error de conexión: ${e && e.message}`;
   }
+  dbg += ` [ej ${currentExercise.id}, usuario ${currentUser.id}]`;
+  let dbgEl = document.getElementById('save-debug');
+  if(!dbgEl){
+    dbgEl = document.createElement('div');
+    dbgEl.id = 'save-debug';
+    dbgEl.style.cssText = 'margin:0.8rem 1rem;padding:0.6rem;border:1px dashed #888;border-radius:6px;font-size:0.72rem;color:#ccc;word-break:break-word';
+    const nb = document.getElementById('next-ex-btn');
+    if(nb && nb.parentNode) nb.parentNode.insertBefore(dbgEl, nb.nextSibling);
+    else document.body.appendChild(dbgEl);
+  }
+  dbgEl.textContent = dbg;
 
   // Mostrar botón siguiente si hay un ejercicio siguiente dentro de la lista
   // que el alumno estaba viendo (respeta el filtro de pendientes si estaba activo)
