@@ -1051,7 +1051,6 @@ async function hashPassword(password, salt){
 }
 
 async function openExercise(ex){
-  { const _d=document.getElementById('save-debug'); if(_d) _d.remove(); }
   // Si ya estábamos en un ejercicio de esta misma categoría/nivel (por
   // ejemplo, viniendo de "Siguiente ejercicio"), no apilamos una entrada de
   // historial nueva por cada ejercicio — si no, después de resolver varios
@@ -2170,18 +2169,7 @@ async function solveExerciseComplete(){
   }catch(e){
     dbg = `❌ Error de conexión: ${e && e.message}`;
   }
-  try{ const _plain = await dbGet('progress',`user_id=eq.${currentUser.id}&select=exercise_id`); dbg += ` | Consulta simple devuelve ${Array.isArray(_plain)?_plain.length:'error'} filas.`; const _all = await dbGetAll('progress',`user_id=eq.${currentUser.id}&select=exercise_id`); dbg += ` Consulta completa: ${Array.isArray(_all)?_all.length:'error'}.`; }catch(e){}
-  dbg += ` [ej ${currentExercise.id}]`;
-  let dbgEl = document.getElementById('save-debug');
-  if(!dbgEl){
-    dbgEl = document.createElement('div');
-    dbgEl.id = 'save-debug';
-    dbgEl.style.cssText = 'margin:0.8rem 1rem;padding:0.6rem;border:1px dashed #888;border-radius:6px;font-size:0.72rem;color:#ccc;word-break:break-word';
-    const nb = document.getElementById('next-ex-btn');
-    if(nb && nb.parentNode) nb.parentNode.insertBefore(dbgEl, nb.nextSibling);
-    else document.body.appendChild(dbgEl);
-  }
-  dbgEl.textContent = dbg;
+  if(dbg.startsWith('❌') || dbg.startsWith('⚠️')) console.error('Guardado de progreso:', dbg);
 
   // Mostrar botón siguiente si hay un ejercicio siguiente dentro de la lista
   // que el alumno estaba viendo (respeta el filtro de pendientes si estaba activo)
