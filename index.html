@@ -7,6 +7,10 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#c9a84c">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://zipzdmlrgctlioqimueg.supabase.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root { --bg:#000000;--surface:#0a0a0a;--surface2:#111111;--border:#222222;--gold:#c9a84c;--gold-light:#e8c96a;--cream:#f0ead8;--text:#e8e0d0;--muted:#7a7060;--danger:#a05050;--sq-light:#f0d9b5;--sq-dark:#b58863; }
@@ -397,7 +401,6 @@
   @keyframes toastIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -450,7 +453,7 @@
         <div class="home-card-desc">Practicá posiciones y tácticas de ajedrez</div>
         <div class="home-card-stat" id="home-ex-stat">Cargando...</div>
       </div>
-      <div class="home-card card-bot" onclick="showStudentSection('play-bot')">
+      <div class="home-card card-bot" onclick="initStockfish();showStudentSection('play-bot')">
         <img id="home-bot-icon" alt="Shamy" style="width:44px;height:44px;object-fit:contain;margin:0 auto 0.3rem;align-self:center;display:block">
         <div class="home-card-title">Jugá contra Shamy</div>
         <div class="home-card-desc">Elegí el nivel y jugá una partida libre</div>
@@ -2530,8 +2533,11 @@ async function renderAdminStats(){
 let stockfish=null;let botLevel=10;let botWaiting=false;
 let boardFlipped=false;
 
+let _sfPromise = null;
 function initStockfish(){
-  fetch('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js')
+  if(stockfish) return Promise.resolve();
+  if(_sfPromise) return _sfPromise;
+  _sfPromise = fetch('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js')
     .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
     .then(scriptText=>{
       const blob = new Blob([scriptText], {type:'application/javascript'});
@@ -2554,7 +2560,8 @@ function initStockfish(){
       stockfish.postMessage('uci');stockfish.postMessage('isready');
       console.log('Stockfish cargado correctamente');
     })
-    .catch(e=>{ stockfish=null; console.error('No se pudo cargar Stockfish:', e); });
+    .catch(e=>{ stockfish=null; _sfPromise=null; console.error('No se pudo cargar Stockfish:', e); });
+  return _sfPromise;
 }
 
 function updateBotLevel(val){botLevel=parseInt(val);document.getElementById('bot-level-label').textContent='Nivel '+botLevel;}
@@ -2564,7 +2571,8 @@ function hideBotThinking(){const el=document.getElementById('bot-thinking');if(e
 function askBotToMove(){
   const botActiveEl=document.getElementById('bot-active');
   if(!botActiveEl||!botActiveEl.checked)return;
-  if(!stockfish||!chessGame||chessGame.game_over()||botWaiting)return;
+  if(!stockfish){ initStockfish(); return; }
+  if(!chessGame||chessGame.game_over()||botWaiting)return;
   botWaiting=true;showBotThinking();
   const depth=Math.max(1,Math.min(botLevel*2,15));
   const skillLevel=Math.round((botLevel-1)*(20/9));
@@ -3916,7 +3924,6 @@ window.addEventListener('DOMContentLoaded', function(){
   const spModal = document.getElementById('student-progress-modal');
   if(spModal) spModal.addEventListener('click',function(e){if(e.target===this)closeStudentProgressModal();});
   initParticles();
-  initStockfish();
   restoreSession();
   initInstallPrompt();
 });
@@ -5968,6 +5975,7 @@ let botLastMove = null;
 let botThinking = false;
 
 function startBotGame(){
+  initStockfish();
   botChessGame = new Chess();
   botSelectedSquare = null;
   botPossibleMoves = [];
@@ -6266,7 +6274,12 @@ function finalizePlayerBotMove(from,to,promo){
 }
 
 function makeBotMove(){
-  if(!botChessGame||botChessGame.game_over()||!stockfish||botTimeIsUp) return;
+  if(!botChessGame||botChessGame.game_over()||botTimeIsUp) return;
+  if(!stockfish){
+    // Todavía se está descargando el motor de Shamy: reintentar apenas esté listo
+    initStockfish().then(()=>{ if(stockfish) setTimeout(makeBotMove,100); });
+    return;
+  }
   botThinking=true;updateBotStatus();
   const lvl = BOT_LEVELS.find(l=>l.id===botGameLevel)||BOT_LEVELS[2];
   stockfish.postMessage('ucinewgame');
