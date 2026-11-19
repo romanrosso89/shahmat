@@ -153,6 +153,8 @@
   .folder-badge.cat-mate2{background:rgba(50,50,180,0.25)}
   .folder-badge.cat-mate3{background:rgba(50,150,50,0.25)}
   .folder-badge.cat-mate4{background:rgba(180,140,50,0.25)}
+  .folder-card.cat-tactic{background:linear-gradient(135deg,#0e1520,#152238);border-color:#2f5a99}
+  .folder-badge.cat-tactic{background:rgba(70,130,220,0.25)}
   .folder-badge.cat-default{background:rgba(201,168,76,0.15)}
   .folder-info{flex:1}
   .folder-title{font-family:'Playfair Display',serif;font-weight:700;font-size:1.05rem;margin-bottom:0.25rem;color:var(--cream)}
@@ -740,6 +742,16 @@
             <option value="mateIn2|Mate en 2">Mate en 2</option>
             <option value="mateIn3|Mate en 3">Mate en 3</option>
             <option value="mateIn4|Mate en 4">Mate en 4</option>
+            <optgroup label="Tácticas">
+              <option value="fork|Horquillas">Horquillas</option>
+              <option value="pin|Clavadas">Clavadas</option>
+              <option value="skewer|Enfilada">Enfilada</option>
+              <option value="discoveredAttack|Ataque descubierto">Ataque descubierto</option>
+              <option value="hangingPiece|Piezas colgadas">Piezas colgadas</option>
+              <option value="trappedPiece|Pieza atrapada">Pieza atrapada</option>
+              <option value="deflection|Desviación">Desviación</option>
+              <option value="attraction|Atracción">Atracción</option>
+            </optgroup>
           </select>
         </div>
         <div class="form-row">
@@ -1005,6 +1017,95 @@ async function dbGetAll(table, q='') {
   }
   return all;
 }
+// ── Caché del progreso del alumno (evita pedirlo a la base en cada pantalla) ──
+let _progressCache = null; // {uid, rows, ts}
+async function getMyProgress(force){
+  if(!currentUser) return [];
+  const uid = String(currentUser.id);
+  const fresh = _progressCache && _progressCache.uid===uid && (Date.now()-_progressCache.ts) < 180000;
+  if(fresh && !force) return _progressCache.rows;
+  const rows = await dbGetAll('progress', `user_id=eq.${currentUser.id}&order=created_at.asc`);
+  if(Array.isArray(rows)){ _progressCache = {uid, rows, ts:Date.now()}; return rows; }
+  return (_progressCache && _progressCache.uid===uid) ? _progressCache.rows : [];
+}
+function progressCacheAdd(exerciseId, elapsed){
+  if(!currentUser || !_progressCache || _progressCache.uid!==String(currentUser.id)) return;
+  if(_progressCache.rows.some(r=>String(r.exercise_id)===String(exerciseId))) return;
+  _progressCache.rows.push({user_id:currentUser.id, exercise_id:exerciseId, time_seconds:elapsed||0, created_at:new Date().toISOString()});
+}
+function progressCacheRemove(exerciseId){
+  if(!_progressCache) return;
+  _progressCache.rows = _progressCache.rows.filter(r=>String(r.exercise_id)!==String(exerciseId));
+}
+
+// ── Lista de ejercicios: se muestra al instante desde el celular y se actualiza en segundo plano ──
+async function loadExercisesCached(){
+  let cached = null;
+  try{ cached = JSON.parse(localStorage.getItem('shahmat_ex_cache')||'null'); }catch(e){}
+  const fresh = dbGetAll('exercises','order=created_at.asc').then(rows=>{
+    if(Array.isArray(rows)){
+      try{ localStorage.setItem('shahmat_ex_cache', JSON.stringify({t:Date.now(), rows})); }catch(e){}
+    }
+    return rows;
+  });
+  if(cached && Array.isArray(cached.rows) && cached.rows.length){
+    fresh.then(rows=>{
+      if(Array.isArray(rows) && rows.length){
+        allExercises = rows;
+        const el = document.getElementById('home-ex-stat');
+        if(el) el.textContent = rows.length+' ejercicios disponibles';
+      }
+    }).catch(()=>{});
+    return cached.rows;
+  }
+  return await fresh;
+}
+
+// ── Mini tableros: se dibujan solo cuando aparecen en pantalla ──
+let _miniObserver = null;
+function lazyMiniBoardHtml(fen, flipped){
+  return `<div class="mini-lazy" data-fen="${_esc(fen||'')}" data-flipped="${flipped?1:0}" style="width:100%;aspect-ratio:1;background:var(--surface2)"></div>`;
+}
+function _fillMini(el){
+  if(!el || el.dataset.done || !el.parentNode) return;
+  el.dataset.done = '1';
+  const html = renderMiniBoard(el.dataset.fen, el.dataset.flipped==='1');
+  el.outerHTML = html;
+}
+function observeMiniBoards(root){
+  const els = (root||document).querySelectorAll('.mini-lazy');
+  if(!('IntersectionObserver' in window)){ els.forEach(_fillMini); return; }
+  if(!_miniObserver){
+    _miniObserver = new IntersectionObserver(entries=>{
+      entries.forEach(en=>{ if(en.isIntersecting){ _miniObserver.unobserve(en.target); _fillMini(en.target); } });
+    }, {rootMargin:'400px'});
+  }
+  els.forEach(el=>_miniObserver.observe(el));
+}
+
+// ── Guardado del progreso de un ejercicio resuelto ──
+async function saveExerciseProgress(exerciseId, elapsed){
+  try{
+    const existing = await dbGet('progress', `user_id=eq.${currentUser.id}&exercise_id=eq.${exerciseId}`);
+    if(Array.isArray(existing) && !existing.length){
+      const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:exerciseId,time_seconds:elapsed});
+      if(progRes && progRes.__error){
+        console.error('No se pudo guardar el progreso:', progRes);
+        progressCacheRemove(exerciseId);
+        alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
+      }
+    } else if(!Array.isArray(existing)){
+      console.error('No se pudo verificar el progreso existente:', existing);
+      progressCacheRemove(exerciseId);
+      alert('No se pudo guardar tu progreso de este ejercicio (no se pudo consultar la base). Avisale al profe.');
+    }
+  }catch(e){
+    console.error('Error de conexión al guardar progreso', e);
+    progressCacheRemove(exerciseId);
+    alert('No se pudo guardar tu progreso de este ejercicio (sin conexión). Probá de nuevo cuando tengas internet.');
+  }
+}
+
 async function dbInsert(table, data) {
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {method:'POST',headers:H,body:JSON.stringify(data)});
   const body = await resp.json().catch(()=>null);
@@ -1439,7 +1540,7 @@ async function renderStudentView() {
 
   // Cargar racha y mostrar badge
   try {
-    const prog = await dbGetAll('progress', `user_id=eq.${u.id}&order=created_at.asc`);
+    const prog = await getMyProgress(true);
     const {current} = calcStreak(prog);
     const badge = document.getElementById('racha-badge');
     if(badge && current > 0){
@@ -1452,7 +1553,7 @@ async function renderStudentView() {
 
   const list=document.getElementById('exercise-list');
   list.innerHTML='<div class="loading"><span class="spinner"></span>Cargando...</div>';
-  allExercises = await dbGetAll('exercises','order=created_at.asc');
+  allExercises = await loadExercisesCached();
   const homeExStat=document.getElementById('home-ex-stat');
   if(homeExStat) homeExStat.textContent=allExercises.length+' ejercicios disponibles';
   renderFolders();
@@ -1505,7 +1606,16 @@ function renderFolders() {
   const extraCats = [...new Set(allExercises.map(e=>e.category||'General'))]
     .filter(c => !MATE_CATS.includes(c) && c !== 'Finales que todos deben conocer' &&
       !['Mate con 2 torres','Mate con dama','Mate con 1 torre','Mate con 2 alfiles','Mate con alfil y caballo'].includes(c));
-  extraCats.forEach(c=>TOP_CATEGORIES.push({name:c,icon:'♟',cls:'cat-default'}));
+  const TACTIC_ICONS = {'Horquillas':'🍴','Clavadas':'📌','Enfilada':'🗡️','Ataque descubierto':'💥','Piezas colgadas':'🎯','Pieza atrapada':'🪤','Desviación':'↪️','Atracción':'🧲'};
+  const tacticOrder = Object.keys(TACTIC_ICONS);
+  extraCats.sort((a,b)=>{
+    const ia=tacticOrder.indexOf(a), ib=tacticOrder.indexOf(b);
+    if(ia!==-1 && ib!==-1) return ia-ib;
+    if(ia!==-1) return -1;
+    if(ib!==-1) return 1;
+    return 0;
+  });
+  extraCats.forEach(c=>TOP_CATEGORIES.push(TACTIC_ICONS[c] ? {name:c,icon:TACTIC_ICONS[c],cls:'cat-tactic'} : {name:c,icon:'♟',cls:'cat-default'}));
 
   TOP_CATEGORIES.forEach((catObj)=>{
     let exCount = 0;
@@ -1667,7 +1777,7 @@ async function renderExerciseList(category,level,onlyPending){
   // Obtener ejercicios resueltos por el alumno
   let solvedIds = new Set();
   try {
-    const prog = await dbGetAll('progress', `user_id=eq.${u.id}`);
+    const prog = await getMyProgress();
     if(Array.isArray(prog)) prog.forEach(p => solvedIds.add(String(p.exercise_id)));
   } catch(e){}
 
@@ -1713,7 +1823,7 @@ async function renderExerciseList(category,level,onlyPending){
     card.className='exercise-card'+(locked?' locked':'');
     if(!locked) card.style.borderColor = ex.player_color==='b' ? '#888' : '';
 
-    const miniBoard = renderMiniBoard(ex.fen, flipped);
+    const miniBoard = lazyMiniBoardHtml(ex.fen, flipped);
     const checkmark = solved ? '<span class="ex-card-check">✓</span>' : '';
     const colorBadge = ex.player_color==='b'
       ? '<span style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.68rem;color:#ccc;background:#222;border:1px solid #555;border-radius:10px;padding:0.1rem 0.5rem"><span style="width:9px;height:9px;border-radius:50%;background:#222;border:1.5px solid #ccc;display:inline-block"></span>Negras</span>'
@@ -1730,6 +1840,7 @@ async function renderExerciseList(category,level,onlyPending){
     card.onclick=locked?()=>alert('🔒 Este ejercicio es solo para alumnos PRO. Consultá con tu profesor para acceder.'):()=>{console.log('click en ejercicio', ex.id, ex.title); openExercise(ex);};
     list.appendChild(card);
   });
+  observeMiniBoards(list);
   setTimeout(animateCards,50);
 }
 
@@ -2102,15 +2213,17 @@ async function checkAutoSolve(from,to){
   if(chessGame.in_checkmate()){ await solveExerciseComplete(); return; }
 
   if(currentExercise._moveIndex >= solutionMoves.length){
-    // No hay más jugadas registradas en la solución (ej: ejercicio cargado a mano con una sola jugada)
-    showResultBanner('correct');
+    // Se completó toda la secuencia de la solución (ejercicios de táctica que no
+    // terminan en mate, o cargados a mano): el ejercicio queda resuelto y se guarda.
+    if(duelMode && duelRow){ await handleDuelCorrectAnswer(); return; }
+    await solveExerciseComplete();
     return;
   }
 
   // Quedan más jugadas: el rival responde con la jugada EXACTA de la solución (no con Stockfish)
   // No mostramos "Excelente" aca todavia: ese cartel queda reservado para cuando se
   // termina de resolver el ejercicio completo (ver solveExerciseComplete).
-  setTimeout(()=>{ playExerciseOpponentMove(); }, 700);
+  setTimeout(()=>{ playExerciseOpponentMove(); }, 450);
 }
 
 function playExerciseOpponentMove(){
@@ -2131,6 +2244,10 @@ function playExerciseOpponentMove(){
   drawBoard();
   currentExercise._moveIndex = idx + 1;
 
+  if(!chessGame.in_checkmate() && currentExercise._moveIndex >= solutionMoves.length){
+    solveExerciseComplete();
+    return;
+  }
   if(chessGame.in_checkmate()){
     showResultBanner('incorrect');
     const statusEl = document.getElementById('game-status');
@@ -2147,31 +2264,8 @@ async function solveExerciseComplete(){
   if(statusEl){statusEl.textContent='♛ ¡Ejercicio completado!';statusEl.style.cssText='display:block;text-align:center;padding:0.8rem;background:rgba(90,138,106,0.2);border:1px solid rgba(90,138,106,0.4);border-radius:3px;color:#7ab88a;font-weight:600;font-size:1rem;margin-top:0.5rem';}
   const ind=document.getElementById('solved-indicator');
   if(ind)ind.innerHTML=`<span class="solved-badge">✓ Resuelto</span>`;
-  // ── Guardado del progreso + diagnóstico visible (temporal) ──
-  let dbg = '';
-  try{
-    const existing=await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
-    if(Array.isArray(existing) && !existing.length){
-      const progRes = await dbInsert('progress',{user_id:currentUser.id,exercise_id:currentExercise.id,time_seconds:elapsed});
-      if(progRes && progRes.__error){
-        console.error('No se pudo guardar el progreso:', progRes);
-        dbg = `❌ NO SE GUARDÓ. Código ${progRes.status}. ${progRes.message||''} ${progRes.details||''} ${progRes.hint||''}`;
-        alert(`No se pudo guardar tu progreso de este ejercicio (código ${progRes.status}). ${progRes.message||progRes.hint||''}\n\nSacale una foto a este mensaje y mandásela al profe.`);
-      } else {
-        const check = await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${currentExercise.id}`);
-        dbg = (Array.isArray(check) && check.length) ? '✅ Progreso guardado.' : `⚠️ Se envió pero no se encuentra al releer. Respuesta: ${JSON.stringify(check).slice(0,150)}`;
-      }
-    } else if(Array.isArray(existing)){
-      dbg = `ℹ️ Ya estaba guardado como resuelto (fila ${existing[0] && existing[0].id}).`;
-    } else {
-      console.error('No se pudo verificar el progreso existente:', existing);
-      dbg = `❌ No se pudo consultar la base: ${JSON.stringify(existing).slice(0,200)}`;
-      alert('No se pudo guardar tu progreso de este ejercicio (no se pudo consultar la base). Avisale al profe.');
-    }
-  }catch(e){
-    dbg = `❌ Error de conexión: ${e && e.message}`;
-  }
-  if(dbg.startsWith('❌') || dbg.startsWith('⚠️')) console.error('Guardado de progreso:', dbg);
+  // Se anota ya en la memoria de la app (así la lista lo muestra al instante) y se guarda en la base en segundo plano.
+  progressCacheAdd(currentExercise.id, elapsed);
 
   // Mostrar botón siguiente si hay un ejercicio siguiente dentro de la lista
   // que el alumno estaba viendo (respeta el filtro de pendientes si estaba activo)
@@ -2196,6 +2290,8 @@ async function solveExerciseComplete(){
       nextBtn.onclick = () => history.back();
     }
   }
+
+  await saveExerciseProgress(currentExercise.id, elapsed);
 }
 
 function goToNextExercise(){
@@ -2263,8 +2359,9 @@ function formatTime(secs){if(!secs)return '—';const m=Math.floor(secs/60);cons
 
 async function checkIfSolved(exerciseId){
   if(!currentUser)return false;
-  const res=await dbGetAll('progress',`user_id=eq.${currentUser.id}&exercise_id=eq.${exerciseId}`);
-  return res.length>0?res[0]:null;
+  const rows = await getMyProgress();
+  const hit = rows.find(r=>String(r.exercise_id)===String(exerciseId));
+  return hit || null;
 }
 
 function toggleSolution(){
@@ -2275,8 +2372,8 @@ function toggleSolution(){
 
 // ── PROFILE PROGRESS ─────────────────────────────────────────
 async function loadProfileProgress(){
-  const total=await dbGetAll('exercises','');
-  const solved=await dbGetAll('progress',`user_id=eq.${currentUser.id}`);
+  const total=(allExercises && allExercises.length) ? allExercises : await dbGetAll('exercises','');
+  const solved=await getMyProgress();
   const totalCount=total.length;const solvedCount=solved.length;
   const avgTime=solvedCount?Math.round(solved.reduce((a,b)=>a+(b.time_seconds||0),0)/solvedCount):0;
   document.getElementById('profile-solved').textContent=solvedCount;
@@ -2632,7 +2729,7 @@ function applyAdminExerciseFilters(){
   list.innerHTML='';
   exs.forEach(ex=>{
     const flipped = ex.player_color === 'b';
-    const miniBoard = renderMiniBoard(ex.fen, flipped);
+    const miniBoard = lazyMiniBoardHtml(ex.fen, flipped);
     const numInfo = numbering[ex.id];
     const card=document.createElement('div');
     card.className='exercise-card';
@@ -2649,6 +2746,7 @@ function applyAdminExerciseFilters(){
       </div>`;
     list.appendChild(card);
   });
+  observeMiniBoards(list);
 }
 
 async function deleteExercise(id){
@@ -2749,7 +2847,7 @@ async function findDuplicateExercises(){
     const posKey = canonicalFenKey(ex.fen);
     (byPosKey[posKey] = byPosKey[posKey]||[]).push(ex.id);
     const solKey = (ex.solution||'').toLowerCase().trim().replace(/\s+/g,' ');
-    if(solKey.length>=4) (bySolKey[solKey] = bySolKey[solKey]||[]).push(ex.id);
+    if(solKey.split(' ').length>=3) (bySolKey[solKey] = bySolKey[solKey]||[]).push(ex.id);
   });
   const groupReason = {}; // id raíz -> 'posición' | 'secuencia de mate' | 'posición y secuencia'
   Object.values(byPosKey).forEach(ids=>{
@@ -3016,7 +3114,7 @@ async function importFromLichessWithToken(){
   // distinto pero termina en prácticamente la misma secuencia de mate.
   const existingRows = await dbGetAll('exercises', 'select=fen,solution');
   const existingPositions = new Set((existingRows||[]).map(e => canonicalFenKey(e.fen)));
-  const existingSolutions = new Set((existingRows||[]).map(e => (e.solution||'').toLowerCase().trim().replace(/\s+/g,' ')).filter(s=>s.length>=4));
+  const existingSolutions = new Set((existingRows||[]).map(e => (e.solution||'').toLowerCase().trim().replace(/\s+/g,' ')).filter(s=>s.split(' ').length>=3));
 
   status.textContent = `Importando... 0/${qty} puzzles`;
 
@@ -3133,7 +3231,7 @@ async function importFromLichessWithToken(){
       // ¿Ya tenemos esta misma secuencia de jugadas de mate, aunque arranque
       // de una posición distinta? (esto agarra los "casi el mismo mate")
       const solKey = (solution||'').toLowerCase().trim().replace(/\s+/g,' ');
-      if(solKey.length>=4 && existingSolutions.has(solKey)){ dupSkips++; continue; }
+      if(solKey.split(' ').length>=3 && existingSolutions.has(solKey)){ dupSkips++; continue; }
 
       // Verificacion final: reproducir toda la secuencia de solucion desde `fen` y confirmar
       // que es legal y, si el tema es de mate, que efectivamente termina en jaque mate.
@@ -3167,7 +3265,7 @@ async function importFromLichessWithToken(){
         fen, solution, level:nivelCalculado, category:categoryName, access, player_color:playerColor, video_url:null
       });
       existingPositions.add(dedupKey); // para no repetirlo dentro de esta misma tanda
-      if(solKey.length>=4) existingSolutions.add(solKey);
+      if(solKey.split(' ').length>=3) existingSolutions.add(solKey);
       imported++;
       status.textContent = `Importando... ${imported}/${qty} puzzles`;
     }
@@ -3286,7 +3384,7 @@ async function selectAvatar(emoji){
 
 async function loadProfileStats(){
   try{
-    const prog=await dbGetAll('progress',`user_id=eq.${currentUser.id}&order=created_at.asc`);
+    const prog=await getMyProgress();
     const {current}=calcStreak(Array.isArray(prog)?prog:[]);
     const rachaEl=document.getElementById('profile-racha-stat');
     if(rachaEl)rachaEl.textContent=current>0?`🔥 ${current} día${current!==1?'s':''}`:'0 días';
@@ -3369,6 +3467,23 @@ async function renderUsers(){
   const allProgress = await dbGetAll('progress', '');
   const totalEx = allExercises ? allExercises.length : 0;
 
+  // Última vez que cada alumno estuvo activo: la más reciente entre sus
+  // ingresos a la app (últimos 120 días) y sus ejercicios resueltos.
+  const lastSeen = {};
+  try{
+    const since = new Date(Date.now()-120*86400000).toISOString();
+    const ses = await dbGetAll('sessions', `select=user_id,started_at&started_at=gte.${since}`);
+    if(Array.isArray(ses)) ses.forEach(x=>{ const t=new Date(x.started_at).getTime(); const k=String(x.user_id); if(t && (!lastSeen[k]||t>lastSeen[k])) lastSeen[k]=t; });
+  }catch(e){}
+  (allProgress||[]).forEach(p=>{ const t=p.created_at?new Date(p.created_at).getTime():0; const k=String(p.user_id); if(t && (!lastSeen[k]||t>lastSeen[k])) lastSeen[k]=t; });
+  function lastSeenLabel(uid){
+    const t = lastSeen[String(uid)];
+    if(!t) return {txt:'sin actividad en 4 meses', days:999, color:'var(--danger)'};
+    const d = Math.floor((Date.now()-t)/86400000);
+    const txt = d<=0 ? 'activo hoy' : (d===1 ? 'ayer' : `hace ${d} días`);
+    return {txt, days:d, color: d>=14 ? 'var(--danger)' : (d>=7 ? 'var(--gold)' : '#7ab88a')};
+  }
+
   if(!users.length){
     listEl.innerHTML = '<div class="empty-state"><div class="icon">👤</div><p>No hay alumnos registrados aún.</p></div>';
     return;
@@ -3389,6 +3504,30 @@ async function renderUsers(){
   }
 
   listEl.innerHTML = '';
+
+  // Botón de reportes mensuales de todos los alumnos
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem';
+  toolbar.innerHTML = `<button class="btn" style="width:auto;margin:0;background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:0.8rem;padding:0.5rem 0.9rem" onclick="openAllMonthlyReports(0)">📄 Reportes mensuales de todos</button>`;
+  listEl.appendChild(toolbar);
+
+  // Alumnos que hace 7 días o más que no practican (sin contar bloqueados ni la cuenta de prueba del profe)
+  _inactiveStudents = active.filter(u=>!u.blocked && !u.hidden)
+    .map(u=>({u, info:lastSeenLabel(u.id)}))
+    .filter(x=>x.info.days>=7)
+    .sort((a,b)=>b.info.days-a.info.days);
+  if(_inactiveStudents.length){
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:1.2rem;padding:0.8rem;background:rgba(230,80,80,0.07);border:1px solid rgba(230,80,80,0.35);border-radius:6px';
+    wrap.innerHTML = `<div style="font-size:0.8rem;color:var(--danger);font-weight:600;margin-bottom:0.2rem">😴 Hace 7 días o más que no practican (${_inactiveStudents.length})</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:0.5rem">Tocá "Copiar mensaje" y pegalo en WhatsApp para invitarlos a volver.</div>` +
+      _inactiveStudents.map((x,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.45rem 0;border-top:1px solid rgba(255,255,255,0.06)">
+        <div style="min-width:0"><div style="font-size:0.85rem;font-weight:500">${_esc(x.u.name)}</div>
+        <div style="font-size:0.72rem;color:${x.info.color}">${x.info.txt}</div></div>
+        <button id="inactive-copy-${i}" onclick="copyInactiveMessage(${i})" style="font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:4px;border:1px solid var(--gold);background:transparent;color:var(--gold);cursor:pointer;white-space:nowrap;flex-shrink:0">💬 Copiar mensaje</button>
+      </div>`).join('');
+    listEl.appendChild(wrap);
+  }
 
   if(pending.length){
     const pendWrap = document.createElement('div');
@@ -3429,7 +3568,7 @@ async function renderUsers(){
           <button onclick='editUserName(${JSON.stringify(String(u.id))}, ${JSON.stringify(u.name)})' style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.75rem;padding:0" title="Editar nombre">✏️</button>
           <span class="badge ${u.plan==='premium'?'PRO':'Básico'}">${u.plan==='premium'?'PRO':'Básico'}</span>
         </div>
-        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">${u.email} · ${solved}/${totalEx} ejercicios</div>
+        <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.4rem">${u.email} · ${solved}/${totalEx} ejercicios · <span style="color:${lastSeenLabel(u.id).color}">🕒 ${lastSeenLabel(u.id).txt}</span></div>
         <div class="progress-bar-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:0.3rem;align-items:flex-end">
@@ -3439,6 +3578,99 @@ async function renderUsers(){
       </div>`;
     listEl.appendChild(row);
   });
+}
+
+// ── Alumnos inactivos + reportes mensuales de todos ──────────────
+let _inactiveStudents = [];
+let _bulkReports = [];
+function _esc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _copyText(text, okCb){
+  const done = ()=>{ if(okCb) okCb(); };
+  try{
+    navigator.clipboard.writeText(text).then(done).catch(()=>{ _copyFallback(text); done(); });
+  }catch(e){ _copyFallback(text); done(); }
+}
+function _copyFallback(text){
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.cssText='position:fixed;opacity:0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  ta.remove();
+}
+function copyInactiveMessage(i){
+  const x = _inactiveStudents[i]; if(!x) return;
+  const first = (x.u.name||'').split(' ')[0];
+  const msg = `¡Hola ${first}! 👋 Hace unos días que no te veo practicar en la app de Shah Mat. Hay ejercicios esperándote. Cuando puedas, entrá y resolvé aunque sea uno, ¡se nota la diferencia! ♞ Un abrazo.`;
+  _copyText(msg, ()=>{
+    const b = document.getElementById('inactive-copy-'+i);
+    if(b){ const old=b.textContent; b.textContent='✓ Copiado'; setTimeout(()=>{ b.textContent=old; }, 2000); }
+  });
+}
+
+async function openAllMonthlyReports(monthOffset){
+  monthOffset = monthOffset||0;
+  const modal = document.getElementById('monthly-report-modal');
+  const body = document.getElementById('monthly-report-body');
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>Generando reportes...</div>';
+  modal.style.display = 'flex';
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth()+monthOffset, 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth()+monthOffset+1, 1);
+  const monthLabel = `${MESES_ES[monthStart.getMonth()]} de ${monthStart.getFullYear()}`;
+
+  const users = await dbGet('users', 'role=eq.student&order=name.asc');
+  const allProg = await dbGetAll('progress', '');
+  const exCatMap = {};
+  (allExercises||[]).forEach(ex => { exCatMap[String(ex.id)] = ex.category || 'General'; });
+
+  const students = (Array.isArray(users)?users:[]).filter(u=>u.approved!==false && !u.blocked && !u.hidden);
+  _bulkReports = students.map(u=>{
+    const mine = (allProg||[]).filter(p=>String(p.user_id)===String(u.id));
+    const inMonth = mine.filter(p=>{ const t=p.created_at?new Date(p.created_at):null; return t && t>=monthStart && t<monthEnd; });
+    const byCat = {};
+    inMonth.forEach(p=>{ const c=exCatMap[String(p.exercise_id)]||'General'; byCat[c]=(byCat[c]||0)+1; });
+    const catLines = Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]).map(c=>`   • ${c}: ${byCat[c]}`).join('\n');
+    const racha = calcStreak(mine).current;
+    const texto = `📄 Reporte de ${u.name} — ${monthLabel}
+♞ Academia Shah Mat
+
+✅ Ejercicios resueltos este mes: ${inMonth.length}${catLines ? '\n'+catLines : ''}
+
+🔥 Racha actual: ${racha} día${racha!==1?'s':''}
+📚 Ejercicios resueltos en total: ${mine.length}
+🤖 Victorias contra el bot: ${u.bot_wins||0}
+
+${inMonth.length>0 ? '¡Excelente trabajo este mes! 🎉' : 'Todavía no resolvió ejercicios este mes.'}`;
+    return {name:u.name, count:inMonth.length, texto};
+  });
+
+  const tabBtn = (off,label)=>`<button onclick="openAllMonthlyReports(${off})" style="flex:1;padding:0.4rem;border-radius:20px;font-size:0.78rem;font-weight:600;cursor:pointer;border:1px solid ${off===monthOffset?'var(--gold)':'var(--border)'};background:${off===monthOffset?'rgba(201,168,76,0.18)':'transparent'};color:${off===monthOffset?'var(--gold)':'var(--muted)'}">${label}</button>`;
+  const canShare = typeof navigator.share === 'function';
+  body.innerHTML = `
+    <div style="display:flex;gap:0.4rem;margin-bottom:0.8rem">${tabBtn(0,'Este mes')}${tabBtn(-1,'Mes pasado')}</div>
+    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.7rem">${_esc(monthLabel)} · ${_bulkReports.length} alumno${_bulkReports.length!==1?'s':''}. Copiá cada reporte y pegalo en el WhatsApp de los papás.</div>
+    ${_bulkReports.length ? _bulkReports.map((r,i)=>`<div style="padding:0.6rem 0;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+        <div style="min-width:0"><div style="font-size:0.88rem;font-weight:500">${_esc(r.name)}</div>
+        <div style="font-size:0.72rem;color:var(--muted)">${r.count} ejercicio${r.count!==1?'s':''} este período</div></div>
+        <div style="display:flex;gap:0.3rem;flex-shrink:0">
+          <button id="bulk-copy-${i}" onclick="copyBulkReport(${i})" style="font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:4px;border:1px solid var(--gold);background:transparent;color:var(--gold);cursor:pointer">📋 Copiar</button>
+          ${canShare?`<button onclick="shareBulkReport(${i})" style="font-size:0.72rem;padding:0.3rem 0.6rem;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--cream);cursor:pointer">📤</button>`:''}
+        </div>
+      </div>
+    </div>`).join('') : '<div class="empty-state"><p>No hay alumnos activos.</p></div>'}`;
+}
+function copyBulkReport(i){
+  const r = _bulkReports[i]; if(!r) return;
+  _copyText(r.texto, ()=>{
+    const b = document.getElementById('bulk-copy-'+i);
+    if(b){ const old=b.textContent; b.textContent='✓ Copiado'; setTimeout(()=>{ b.textContent=old; }, 2000); }
+  });
+}
+function shareBulkReport(i){
+  const r = _bulkReports[i]; if(!r) return;
+  navigator.share({text:r.texto}).catch(()=>{});
 }
 
 async function approveUser(userId){
